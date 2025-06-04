@@ -30,7 +30,7 @@ define(['./workbox-3e911b1d'], function (e) {
     e.clientsClaim(),
     e.precacheAndRoute(
       [
-        { url: 'assets/_plugin-vue_export-helper-DlAUqK2U.js', revision: null },
+        { url: 'assets/plugin-vue_export-helper-DlAUqK2U.js', revision: null },
         { url: 'assets/AppLayout.vue_vue_type_script_setup_true_lang-DhLF5yfz.js', revision: null },
         { url: 'assets/auth-CFdADcfQ.js', revision: null },
         { url: 'assets/fa-brands-400-Dur5g48u.ttf', revision: null },
