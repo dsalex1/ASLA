@@ -135,6 +135,7 @@ async function uploadFile(file: FileSystemFileHandle) {
   })
   return fileRef
 }
+const songs = useCollection(songCollection)
 </script>
 
 <template>
@@ -154,7 +155,10 @@ async function uploadFile(file: FileSystemFileHandle) {
       </div>
     </h2>
     <v-text-field v-model="setlist.name" label="Name" />
-    <FileSelector v-model="currentSongs" :files="pdfTree" />
+    <FileSelector
+      v-model="currentSongs"
+      :files="pdfTree.length > 0 ? pdfTree : songs.map((s) => ({ name: s.filename }))"
+    />
   </AppLayout>
 </template>
 
