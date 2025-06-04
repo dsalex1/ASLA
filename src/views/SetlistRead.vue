@@ -12,6 +12,8 @@ import { useCollection, useDocument } from 'vuefire'
 const route = useRoute()
 const setlistId = route.params.id as string
 
+const lyricsOnly = route.query.lyricsOnly
+
 const setlistData = useDocument(doc(setlistCollection, setlistId))
 
 const songs = useCollection(songCollection)
@@ -23,7 +25,7 @@ const selectedFiles = computed(() =>
 
 <template>
   <FullscreenLayout>
-    <FileViewer :songs="selectedFiles">
+    <FileViewer :songs="selectedFiles" :disable-sheets="!!lyricsOnly">
       <h2>
         <Backbutton :to="HOME_ROUTE" />
         Setlist

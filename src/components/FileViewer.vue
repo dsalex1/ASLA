@@ -10,6 +10,7 @@ import { getDownloadURL, ref as firebaseRef, getStorage } from 'firebase/storage
 
 const props = defineProps<{
   songs: Song[]
+  disableSheets?: boolean
 }>()
 
 const { pdfTree } = useSheetBaseDirectory()
@@ -31,7 +32,8 @@ watchEffect(async () => {
   fileContents.value = await Promise.all(
     props.songs.map(async (song) => ({
       name: song.name || 'untitled',
-      dataUrl: await resolveFileUrl(song),
+      dataUrl: props.disableSheets ? '' : await resolveFileUrl(song),
+      pageCount: props.disableSheets ? 1 : undefined,
     }))
   )
 })
@@ -72,6 +74,13 @@ watchEffect(() => {
     block: 'center',
   })
 })
+
+const showLyrics = ref(props.disableSheets ? true : false)
+const fontSize = ref(16)
+
+function formatDuration(duration?: number) {
+  return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
+}
 </script>
 
 <template>
@@ -106,6 +115,46 @@ watchEffect(() => {
       </div>
     </div>
 
+    <!-- song infos-->
+    <div class="w-100 text-center">
+      <span v-if="songs[currentFileIndex]?.key_signature">
+        {{ songs[currentFileIndex]?.key_signature }}
+      </span>
+      <span v-if="songs[currentFileIndex]?.bpm"> - {{ songs[currentFileIndex]?.bpm }} bpm </span>
+      <span v-if="songs[currentFileIndex]?.duration">
+        - <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ formatDuration(songs[currentFileIndex].duration) }}
+      </span>
+      <v-btn
+        v-if="songs[currentFileIndex]?.lyrics && !props.disableSheets"
+        class="ms-2"
+        variant="tonal"
+        density="compact"
+        prepend-icon="fas fa-file-lines"
+        @click="showLyrics = !showLyrics"
+      >
+        {{ showLyrics ? 'Sheets' : 'Lyrics' }}
+      </v-btn>
+      <template v-if="showLyrics">
+        <v-btn
+          class="ms-2"
+          variant="tonal"
+          density="compact"
+          icon="fas fa-minus"
+          @click="fontSize = Math.max(12, fontSize - 2)"
+          v-if="showLyrics"
+        />
+        <span v-if="showLyrics" class="mx-2">{{ fontSize }}</span>
+        <v-btn
+          class="me-2"
+          variant="tonal"
+          density="compact"
+          icon="fas fa-plus"
+          @click="fontSize = Math.min(48, fontSize + 2)"
+          v-if="showLyrics"
+        />
+      </template>
+    </div>
+
     <div
       style="
         position: relative;
@@ -120,11 +169,34 @@ watchEffect(() => {
     >
       <div @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
       <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
-      <div v-for="(file, i) in fileContents" :style="{ opacity: i === currentFileIndex ? 1 : 0 }" style="width: 0px">
+      <div
+        :key="currentFileIndex"
+        v-if="showLyrics"
+        class="mt-2 d-flex flex-column align-center"
+        :style="{ zIndex: 20, height: '100%', overflowY: 'scroll' }"
+      >
+        <div class="bg-white px-5 pb-5">
+          <h2 class="mb-2">{{ songs[currentFileIndex]?.name || 'Untitled' }}</h2>
+          <div
+            style="white-space: pre-wrap"
+            v-if="songs[currentFileIndex]?.lyrics"
+            :style="{ fontSize: fontSize + 'px' }"
+          >
+            {{ songs[currentFileIndex].lyrics }}
+          </div>
+          <div v-else class="text-grey">No lyrics yet</div>
+        </div>
+      </div>
+      <div
+        v-if="!disableSheets"
+        v-for="(file, i) in fileContents"
+        :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
+        style="width: 0px"
+      >
         <vue-pdf-embed
           v-for="pageIndex in file.pageCount || 1"
           v-show="pageIndex === currentFilePage"
-          :height="height - 30"
+          :height="height - 45 - 25"
           :page="pageIndex"
           @loaded="({ numPages }) => (file.pageCount = numPages)"
           :source="file.dataUrl"

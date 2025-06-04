@@ -11,6 +11,10 @@ function formatSongName(song: string) {
     ? song.replace(/.pdf$/, '').substring(0, 13) + '...'
     : song.replace(/.pdf$/, '')
 }
+
+function formatDuration(duration?: number) {
+  return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
+}
 </script>
 
 <template>
@@ -30,12 +34,17 @@ function formatSongName(song: string) {
       <v-col v-for="setlist in setlists" :key="setlist.id" cols="12" sm="6">
         <RouterLink :to="`/setlist/${setlist.id}`" style="text-decoration: none">
           <v-card height="100%">
-            <v-card-title class="d-flex justify-space-between"
-              >{{ setlist.name || 'Untitled' }}
-              <RouterLink :to="`/setlist/${setlist.id}/edit`" @click.stop>
-                <v-btn color="primary" variant="text" class="ms-2" prepend-icon="fas fa-edit">edit</v-btn>
-              </RouterLink>
-            </v-card-title>
+            <div class="d-flex justify-space-between align-center flex-wrap">
+              <v-card-title style="width: 0; flex: 1">{{ setlist.name || 'Untitled' }}</v-card-title>
+              <div>
+                <RouterLink :to="`/setlist/${setlist.id}?lyricsOnly=true`" @click.stop>
+                  <v-btn color="secondary" variant="text" class="ms-2" prepend-icon="fas fa-file-lines">Lyrics</v-btn>
+                </RouterLink>
+                <RouterLink :to="`/setlist/${setlist.id}/edit`" @click.stop>
+                  <v-btn color="primary" variant="text" class="ms-2" prepend-icon="fas fa-edit">edit</v-btn>
+                </RouterLink>
+              </div>
+            </div>
             <VCardSubtitle>
               <v-row>
                 <v-col cols="6">
@@ -44,13 +53,23 @@ function formatSongName(song: string) {
                 </v-col>
                 <v-col cols="6">
                   <v-icon class="me-2">fas fa-clock</v-icon>
-                  /
+                  {{
+                    formatDuration(
+                      setlist.songs
+                        .map((song) => songs.find((s) => s.id == song)?.duration || 0)
+                        .reduce((a, b) => a + b, 0)
+                    )
+                  }}
+                  min
+                  <span v-if="setlist.songs.filter((song) => !songs.find((s) => s.id == song)?.duration).length > 0">
+                    (+{{ setlist.songs.filter((song) => !songs.find((s) => s.id == song)?.duration).length }})
+                  </span>
                 </v-col>
               </v-row>
             </VCardSubtitle>
             <v-card-text>
               <v-chip size="small" v-for="song in setlist.songs" :key="song">{{
-                formatSongName(songs.find((s) => s.id == song)?.filename || '')
+                formatSongName(songs.find((s) => s.id == song)?.name || songs.find((s) => s.id == song)?.filename || '')
               }}</v-chip>
             </v-card-text>
           </v-card>

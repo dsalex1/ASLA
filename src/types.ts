@@ -16,8 +16,8 @@ export type Song = {
   pdfStorageSHA?: string
   pdfStorageRef?: string
   name?: string
-  key_signature?: `${'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B'}${'#' | 'b' | ''}-${'minor' | 'major'}`
-  speed?: number
+  key_signature?: `${'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B'}${'#' | 'b' | ''}${'m' | ''}`
+  bpm?: number
   duration?: number
-  note?: string
+  lyrics?: string
 }

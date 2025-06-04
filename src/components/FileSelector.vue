@@ -18,10 +18,22 @@ const mappedTree = computed(() => mapTree(props.files, (e) => ({ title: e.name }
 const filteredTree = computed(() => {
   return filterTree(mappedTree.value, (e) => !selectedFiles.value.includes(e.title))
 })
+
+const songsDocs = useCollection(songCollection)
+
+function getSongByFilename(filename: string) {
+  return songsDocs.value.find((doc) => doc.filename === filename)
+}
+function getSongDuration(filename: string) {
+  const song = getSongByFilename(filename)
+  return song?.duration ? `${Math.floor(song?.duration / 60)}:${(song?.duration % 60).toString().padStart(2, '0')}` : ''
+}
 //@ts-ignore
 import { Drag, DropList } from 'vue-easy-dnd'
 import { useVModel } from '@vueuse/core'
 import { filterTree, mapTree, Treelike } from '@/helpers'
+import { useCollection } from 'vuefire'
+import { songCollection } from '@/plugins/firebase'
 </script>
 
 <template>
@@ -33,11 +45,20 @@ import { filterTree, mapTree, Treelike } from '@/helpers'
           <template v-slot:empty>
             <v-list-item color="primary">No files selected</v-list-item>
           </template>
-          <template v-slot:item="{ item, reorder }">
+          <template v-slot:item="{ item, index, reorder }">
             <drag :key="item">
               <v-list-item color="primary" :active="reorder">
-                {{ item }}
+                <v-chip>{{ index + 1 }}</v-chip> {{ getSongByFilename(item)?.name || item }}
+                <span v-if="getSongByFilename(item)?.key_signature" class="text-grey">
+                  ({{ getSongByFilename(item)?.key_signature }})
+                </span>
+                <span v-if="getSongByFilename(item)?.bpm" class="text-grey me-3">
+                  - {{ getSongByFilename(item)?.bpm }} bpm
+                </span>
                 <template v-slot:append>
+                  <span v-if="getSongDuration(item)" class="bg-grey text-white rounded px-1">
+                    <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ getSongDuration(item) }}
+                  </span>
                   <v-btn
                     @click="selectedFiles.splice(selectedFiles.indexOf(item), 1)"
                     icon="fas fa-close"
