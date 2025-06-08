@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
 import SongListItem from '@/components/SongListItem.vue'
+import { getSongInformation } from '@/helpers'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { HOME_ROUTE } from '@/router'
@@ -19,10 +20,6 @@ const songsCollection = useCollection(songCollection)
 const songs = computed(() =>
   (setlistData.data.value?.songs || []).map((id) => songsCollection.value.find((s) => s.id == id)!).filter((f) => f)
 )
-
-function formatDuration(duration?: number) {
-  return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
-}
 
 function print() {
   //print with hidden iframe
@@ -70,9 +67,7 @@ function print() {
                       </span>
                       ${song.name}
                       <span style="font-size: 16px;font-weight:normal">
-                        ${[song?.key_signature, song?.bpm && `${song?.bpm} bpm`, formatDuration(song.duration)]
-                          .filter(Boolean)
-                          .join(' - ')}
+                        ${getSongInformation(song)}
                       </span>
                   </div>`
               )

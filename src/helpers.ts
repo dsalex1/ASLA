@@ -1,3 +1,5 @@
+import { Song } from './types'
+
 export type Prettify<T> = {
   [K in keyof T]: T[K]
 } & {}
@@ -34,3 +36,13 @@ export const flatTree = <Tree extends { children?: Tree[] }>(tree: Tree[]): Pret
     return acc
   }, [] as Omit<Tree, 'children'>[])
 }
+
+export const getSongInformation = (song: Song) =>
+  [
+    song?.key_signature,
+    song?.bpm && `${song?.bpm} bpm`,
+    song?.ibi_instrument && `Ibi ${song?.ibi_instrument}`,
+    song.nadine_moderation && '💬',
+  ]
+    .filter(Boolean)
+    .join(' - ')

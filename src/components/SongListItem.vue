@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getSongInformation } from '@/helpers'
 import { Song } from '@/types'
 
 defineProps<{
@@ -23,10 +24,8 @@ function formatDuration(duration?: number) {
       <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
       <div class="d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
-        <div class="me-2">
-          <span v-if="song?.key_signature" class="text-grey">
-            {{ [song?.key_signature, song?.bpm && `${song?.bpm} bpm`].filter(Boolean).join(' - ') }}
-          </span>
+        <div class="text-grey me-2">
+          {{ getSongInformation(song) }}
         </div>
       </div>
     </div>

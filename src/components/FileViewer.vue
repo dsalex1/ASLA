@@ -5,7 +5,7 @@ import { useSwipe, useWindowSize } from '@vueuse/core'
 import { VBtn } from 'vuetify/components'
 import { Song } from '@/types'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
-import { flatTree, mapTree } from '@/helpers'
+import { flatTree, getSongInformation, mapTree } from '@/helpers'
 import { getDownloadURL, ref as firebaseRef, getStorage } from 'firebase/storage'
 
 const props = defineProps<{
@@ -122,10 +122,7 @@ function formatDuration(duration?: number) {
 
     <!-- song infos-->
     <div class="w-100 text-center">
-      <span v-if="songs[currentFileIndex]?.key_signature">
-        {{ songs[currentFileIndex]?.key_signature }}
-      </span>
-      <span v-if="songs[currentFileIndex]?.bpm"> - {{ songs[currentFileIndex]?.bpm }} bpm </span>
+      {{ getSongInformation(songs[currentFileIndex]) }}
       <span v-if="songs[currentFileIndex]?.duration">
         - <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ formatDuration(songs[currentFileIndex].duration) }}
       </span>
@@ -180,6 +177,13 @@ function formatDuration(duration?: number) {
         class="mt-2 d-flex flex-column align-center"
         :style="{ zIndex: 20, height: '100%', overflowY: 'scroll' }"
       >
+        <div class="bg-white px-5 mb-2 w-100" v-if="songs[currentFileIndex]?.nadine_moderation">
+          <h2 class="mb-2">Moderation</h2>
+          <div style="white-space: pre-wrap" :style="{ fontSize: fontSize + 'px' }">
+            {{ songs[currentFileIndex]?.nadine_moderation }}
+          </div>
+        </div>
+
         <div class="bg-white px-5 pb-5">
           <h2 class="mb-2">{{ songs[currentFileIndex]?.name || 'Untitled' }}</h2>
           <div
