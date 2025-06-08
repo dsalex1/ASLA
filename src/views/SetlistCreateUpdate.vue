@@ -111,6 +111,8 @@ async function createSetlist() {
 async function deleteSetlist() {
   if (!setlistId) return
 
+  if (!window.confirm(`Are you sure you want to delete the setlist "${setlist.value.name || 'Untitled'}"?`)) return
+
   error.value = ''
   loading.value = true
   try {
