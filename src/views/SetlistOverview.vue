@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
-import FileViewer from '@/components/FileViewer.vue'
 import SongListItem from '@/components/SongListItem.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import FullscreenLayout from '@/layouts/FullscreenLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { HOME_ROUTE } from '@/router'
 import { doc } from 'firebase/firestore'

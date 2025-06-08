@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { Song } from '@/types'
-import { computed } from 'vue'
 
-const props = defineProps<{
+defineProps<{
   index: number
   song: Song
   draggable?: boolean

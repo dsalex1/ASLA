@@ -11,7 +11,7 @@ const auth = useAuth()
       <RouterLink :to="HOME_ROUTE" style="text-decoration: none">
         <div class="d-flex flex-column align-center">
           <img style="filter: invert()" src="@/assets/logo.svg" width="40" height="40" class="mx-3" />
-          <span style="color: white; font-size: 10px">V0.0.4</span>
+          <span style="color: white; font-size: 10px">V0.0.5</span>
         </div>
       </RouterLink>
       <v-spacer></v-spacer>
