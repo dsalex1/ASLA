@@ -54,7 +54,9 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
           { key: 'key_signature', title: 'Key' },
           { key: 'bpm', title: 'BPM' },
           { key: 'duration', title: 'Duration' },
+          { key: 'ibi_instrument', title: 'Ibi Instrument' },
           { key: 'lyrics', title: 'Lyrics' },
+          { key: 'nadine_moderation', title: 'Moderation' },
         ]"
       >
         <template #item.filename="{ item }">
@@ -141,8 +143,20 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
             />
           </div>
         </template>
+        <template #item.ibi_instrument="{ item }">
+          <!--select with Bass A.Git and E.Git-->
+          <v-select
+            v-model="item.ibi_instrument"
+            :items="['', 'Bass', 'E.Git', 'A.Git']"
+            @update:model-value="saveSong(item)"
+            width="150px"
+            variant="outlined"
+            density="compact"
+            hide-details
+          />
+        </template>
         <template #item.lyrics="{ item }">
-          <v-dialog max-width="600px">
+          <v-dialog max-width="600px" close-on-back>
             <template #activator="{ props }">
               <v-btn v-bind="props" color="primary" variant="text">Edit Lyrics</v-btn>
             </template>
@@ -155,6 +169,26 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
                   rows="15"
                   auto-grow
                   label="Lyrics"
+                  hide-details
+                />
+              </v-card-text>
+            </v-card>
+          </v-dialog>
+        </template>
+        <template #item.nadine_moderation="{ item }">
+          <v-dialog max-width="600px" close-on-back>
+            <template #activator="{ props }">
+              <v-btn v-bind="props" color="primary" variant="text">Edit Moderation</v-btn>
+            </template>
+            <v-card>
+              <v-card-title>Edit Moderation</v-card-title>
+              <v-card-text>
+                <v-textarea
+                  v-model="item.nadine_moderation"
+                  @input="saveSong(item)"
+                  rows="15"
+                  auto-grow
+                  label="Moderation"
                   hide-details
                 />
               </v-card-text>
