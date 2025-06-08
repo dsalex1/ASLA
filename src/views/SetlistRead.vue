@@ -12,20 +12,20 @@ import { useCollection, useDocument } from 'vuefire'
 const route = useRoute()
 const setlistId = route.params.id as string
 
-const lyricsOnly = route.query.lyricsOnly
+const displayMode = route.query.mode as 'lyrics' | 'chords' | 'drums'
 
 const setlistData = useDocument(doc(setlistCollection, setlistId))
 
-const songs = useCollection(songCollection)
+const songsCollection = useCollection(songCollection)
 
-const selectedFiles = computed(() =>
-  (setlistData.data.value?.songs || []).map((id) => songs.value.find((s) => s.id == id)!).filter((f) => f)
+const songs = computed(() =>
+  (setlistData.data.value?.songs || []).map((id) => songsCollection.value.find((s) => s.id == id)!).filter((f) => f)
 )
 </script>
 
 <template>
   <FullscreenLayout>
-    <FileViewer :songs="selectedFiles" :disable-sheets="!!lyricsOnly">
+    <FileViewer :songs="songs" :mode="displayMode">
       <h2>
         <Backbutton :to="HOME_ROUTE" />
         Setlist

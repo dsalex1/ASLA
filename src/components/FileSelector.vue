@@ -2,6 +2,14 @@
 import { computed } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
+//@ts-ignore
+import { Drag, DropList } from 'vue-easy-dnd'
+import { useVModel } from '@vueuse/core'
+import { filterTree, mapTree, Treelike } from '@/helpers'
+import { useCollection } from 'vuefire'
+import { songCollection } from '@/plugins/firebase'
+import SongListItem from '@/components/SongListItem.vue'
+
 const props = defineProps<{
   files: Treelike<{ name: string }>
   modelValue: string[]
@@ -24,16 +32,6 @@ const songsDocs = useCollection(songCollection)
 function getSongByFilename(filename: string) {
   return songsDocs.value.find((doc) => doc.filename === filename)
 }
-function getSongDuration(filename: string) {
-  const song = getSongByFilename(filename)
-  return song?.duration ? `${Math.floor(song?.duration / 60)}:${(song?.duration % 60).toString().padStart(2, '0')}` : ''
-}
-//@ts-ignore
-import { Drag, DropList } from 'vue-easy-dnd'
-import { useVModel } from '@vueuse/core'
-import { filterTree, mapTree, Treelike } from '@/helpers'
-import { useCollection } from 'vuefire'
-import { songCollection } from '@/plugins/firebase'
 </script>
 
 <template>
@@ -46,27 +44,15 @@ import { songCollection } from '@/plugins/firebase'
             <v-list-item color="primary">No files selected</v-list-item>
           </template>
           <template v-slot:item="{ item, index, reorder }">
-            <drag :key="item">
-              <v-list-item color="primary" :active="reorder">
-                <v-chip>{{ index + 1 }}</v-chip> {{ getSongByFilename(item)?.name || item }}
-                <span v-if="getSongByFilename(item)?.key_signature" class="text-grey">
-                  ({{ getSongByFilename(item)?.key_signature }})
-                </span>
-                <span v-if="getSongByFilename(item)?.bpm" class="text-grey me-3">
-                  - {{ getSongByFilename(item)?.bpm }} bpm
-                </span>
-                <template v-slot:append>
-                  <span v-if="getSongDuration(item)" class="bg-grey text-white rounded px-1">
-                    <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ getSongDuration(item) }}
-                  </span>
-                  <v-btn
-                    @click="selectedFiles.splice(selectedFiles.indexOf(item), 1)"
-                    icon="fas fa-close"
-                    variant="plain"
-                    style="height: 32px"
-                  />
-                </template>
-              </v-list-item>
+            <drag :key="item" handle=".drag-handle">
+              <SongListItem
+                :active="reorder"
+                :index="index + 1"
+                :song="getSongByFilename(item)!"
+                @remove="selectedFiles.splice(selectedFiles.indexOf(item), 1)"
+                draggable
+                removeable
+              />
             </drag>
           </template>
           <template v-slot:feedback="{ data }">

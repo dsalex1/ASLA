@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
 import { useSwipe, useWindowSize } from '@vueuse/core'
 import { VBtn } from 'vuetify/components'
@@ -10,7 +10,7 @@ import { getDownloadURL, ref as firebaseRef, getStorage } from 'firebase/storage
 
 const props = defineProps<{
   songs: Song[]
-  disableSheets?: boolean
+  mode?: 'lyrics' | 'chords' | 'drums'
 }>()
 
 const { pdfTree } = useSheetBaseDirectory()
@@ -28,15 +28,20 @@ async function resolveFileUrl(song: Song) {
 
 const fileContents = ref<{ dataUrl: string; name: string; pageCount?: number }[]>([])
 
-watchEffect(async () => {
-  fileContents.value = await Promise.all(
-    props.songs.map(async (song) => ({
-      name: song.name || 'untitled',
-      dataUrl: props.disableSheets ? '' : await resolveFileUrl(song),
-      pageCount: props.disableSheets ? 1 : undefined,
-    }))
-  )
-})
+watch(
+  props,
+  async () => {
+    fileContents.value = await Promise.all(
+      props.songs.map(async (song) => ({
+        pageCount: props.mode == 'lyrics' ? 1 : undefined,
+        ...(fileContents.value?.find((f) => f.name === song.name) ?? {}), //if already loaded overwrite pageCount
+        name: song.name || 'untitled',
+        dataUrl: props.mode == 'lyrics' ? '' : await resolveFileUrl(song),
+      }))
+    )
+  },
+  { immediate: true }
+)
 
 const { height } = useWindowSize()
 
@@ -75,7 +80,7 @@ watchEffect(() => {
   })
 })
 
-const showLyrics = ref(props.disableSheets ? true : false)
+const showLyrics = ref(props.mode == 'lyrics' ? true : false)
 const fontSize = ref(16)
 
 function formatDuration(duration?: number) {
@@ -125,7 +130,7 @@ function formatDuration(duration?: number) {
         - <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ formatDuration(songs[currentFileIndex].duration) }}
       </span>
       <v-btn
-        v-if="songs[currentFileIndex]?.lyrics && !props.disableSheets"
+        v-if="songs[currentFileIndex]?.lyrics && props.mode != 'lyrics'"
         class="ms-2"
         variant="tonal"
         density="compact"
@@ -188,7 +193,7 @@ function formatDuration(duration?: number) {
         </div>
       </div>
       <div
-        v-if="!disableSheets"
+        v-if="props.mode != 'lyrics'"
         v-for="(file, i) in fileContents"
         :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
         style="width: 0px"

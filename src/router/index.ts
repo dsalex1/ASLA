@@ -15,6 +15,10 @@ const router = createRouter({
       component: () => import('@/views/SetlistCreateUpdate.vue'),
     },
     {
+      path: '/setlist/:id/overview',
+      component: () => import('@/views/SetlistOverview.vue'),
+    },
+    {
       path: '/setlist/:id/edit',
       component: () => import('@/views/SetlistCreateUpdate.vue'),
     },
