@@ -1,22 +1,31 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import { songCollection } from '@/plugins/firebase'
+import { songCollection, setlistCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useCollection } from 'vuefire'
 
 const { baseDirectory, chooseNewSheetBaseDirectory } = useSheetBaseDirectory()
 
 const songs = useCollection(songCollection)
-
 const songSearch = ref('')
 
+const setlists = useCollection(setlistCollection)
+const setlistFilter = ref<string | null>(null)
+
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+const filteredSongs = computed(() => {
+  if (!setlistFilter.value) return songs.value
+  const setlist = setlists.value.find((s) => s.id === setlistFilter.value)
+  if (!setlist) return []
+  return setlist.songs.map((songId) => songs.value.find((s) => s.id === songId)!).filter(Boolean)
+})
 
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
@@ -36,6 +45,19 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
     <h3 class="mt-3"></h3>
     <v-card title="Song Details" flat>
       <template #text>
+        <div class="mb-2 d-flex flex-wrap align-center gap-2">
+          <v-chip
+            v-for="setlist in [{ name: 'All', id: null }, ...setlists]"
+            :key="setlist.id || 'null'"
+            :color="setlistFilter === setlist.id ? 'primary' : ''"
+            :variant="setlistFilter === setlist.id ? 'flat' : 'tonal'"
+            class="me-1 mb-1"
+            @click="setlistFilter = setlist.id ?? null"
+            :active="setlistFilter === setlist.id"
+          >
+            {{ setlist.name || 'Untitled' }}
+          </v-chip>
+        </div>
         <v-text-field
           v-model="songSearch"
           label="Search"
@@ -46,10 +68,10 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
       </template>
 
       <v-data-table
-        :items="songs"
+        :items="filteredSongs"
         :search="songSearch"
         :headers="[
-          { key: 'filename', title: 'File' },
+          { key: 'filename', title: 'File', fixed: true },
           { key: 'name', title: 'Name' },
           { key: 'key_signature', title: 'Key' },
           { key: 'bpm', title: 'BPM' },
@@ -120,7 +142,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
               :min="0"
               :max="99"
               type="number"
-              width="60px"
+              width="70px"
               variant="outlined"
               density="compact"
               hide-details
@@ -136,7 +158,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
               :min="0"
               :max="60"
               type="number"
-              width="60px"
+              width="70px"
               variant="outlined"
               density="compact"
               hide-details
@@ -161,7 +183,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
               <v-btn v-bind="props" color="primary" variant="text">Edit Lyrics</v-btn>
             </template>
             <v-card>
-              <v-card-title>Edit Lyrics</v-card-title>
+              <v-card-title>Edit Lyrics - {{ item.name || item.filename }}</v-card-title>
               <v-card-text>
                 <v-textarea
                   v-model="item.lyrics"
@@ -181,7 +203,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
               <v-btn v-bind="props" color="primary" variant="text">Edit Moderation</v-btn>
             </template>
             <v-card>
-              <v-card-title>Edit Moderation</v-card-title>
+              <v-card-title>Edit Moderation - {{ item.name || item.filename }}</v-card-title>
               <v-card-text>
                 <v-textarea
                   v-model="item.nadine_moderation"
