@@ -55,7 +55,7 @@ function print() {
         </style>
       </head>
       <body>
-        <div style="height: 100vh;display: flex; flex-direction: column;justify-content: center;">
+        <div style="height: 100%;display: flex; flex-direction: column;justify-content: center;">
           <h1>${setlistData.data.value?.name} - Setlist</h1>
           <div class="song-list" style="height:0;flex:1;">
             ${songs.value
