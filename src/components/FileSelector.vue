@@ -3,12 +3,12 @@ import { computed } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
 //@ts-ignore
-import { Drag, DropList } from 'vue-easy-dnd'
-import { useVModel } from '@vueuse/core'
-import { filterTree, mapTree, Treelike } from '@/helpers'
-import { useCollection } from 'vuefire'
-import { songCollection } from '@/plugins/firebase'
 import SongListItem from '@/components/SongListItem.vue'
+import { filterTree, mapTree, Treelike } from '@/helpers'
+import { songCollection } from '@/plugins/firebase'
+import { useVModel } from '@vueuse/core'
+import { Drag, DropList } from 'vue-easy-dnd'
+import { useCollection } from 'vuefire'
 
 const props = defineProps<{
   files: Treelike<{ name: string }>
@@ -70,12 +70,16 @@ function getSongByFilename(filename: string) {
       <h3>Available files</h3>
       <v-treeview :items="filteredTree" density="compact" class="disable-active-underlay">
         <template v-slot:item="{ props }">
-          <drag :data="props.title" class="item" :key="props.title">
+          <drag :data="props.title" class="item" :key="props.title" handle=".drag-handle">
             <v-treeview-item
               :title="props.title"
               @click="selectedFiles.push(props.title)"
               prepend-icon="fas fa-file-pdf"
-            />
+            >
+              <template #append>
+                <v-btn class="drag-handle me-n6" icon="fas fa-grip" variant="plain" style="height: 32px" />
+              </template>
+            </v-treeview-item>
           </drag>
         </template>
       </v-treeview>

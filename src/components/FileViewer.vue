@@ -1,12 +1,12 @@
 <script setup lang="ts">
+import { flatTree, getSongInformation, mapTree } from '@/helpers'
+import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
+import { Song } from '@/types'
+import { useSwipe, useWindowSize } from '@vueuse/core'
+import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, ref, watch, watchEffect } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
-import { useSwipe, useWindowSize } from '@vueuse/core'
 import { VBtn } from 'vuetify/components'
-import { Song } from '@/types'
-import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
-import { flatTree, getSongInformation, mapTree } from '@/helpers'
-import { getDownloadURL, ref as firebaseRef, getStorage } from 'firebase/storage'
 
 const props = defineProps<{
   songs: Song[]
@@ -20,9 +20,16 @@ const flattendPdfTree = computed(() =>
 )
 
 async function resolveFileUrl(song: Song) {
-  if (song.pdfStorageRef) return await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
-  if (song.filename)
-    return URL.createObjectURL(await flattendPdfTree.value.find((f) => f.name === song.filename)!.handle.getFile())
+  if (props.mode == 'lyrics') return ''
+  if (props.mode == 'chords' && song.pdfStorageRef)
+    return await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
+  if (props.mode == 'drums' && song.drumsPdfStorageRef)
+    return await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
+
+  if (song.filename) {
+    const localFile = await flattendPdfTree.value.find((f) => f.name === song.filename)
+    if (localFile?.handle) return URL.createObjectURL(await localFile.handle.getFile())
+  }
   return ''
 }
 
@@ -106,7 +113,7 @@ function formatDuration(duration?: number) {
         >
           {{ file.name.length > 15 ? file.name.slice(0, 15) + '...' : file.name }}
           <div
-            v-for="j in file.pageCount"
+            v-for="j in file.pageCount || 1"
             style="position: absolute; bottom: 0; top: 0; height: 100%"
             :style="{
               width: `${100 / (file.pageCount || 1)}%`,
@@ -210,6 +217,13 @@ function formatDuration(duration?: number) {
           @loaded="({ numPages }) => (file.pageCount = numPages)"
           :source="file.dataUrl"
         />
+        <div
+          v-if="!file.dataUrl"
+          class="text-center"
+          style="min-width: 100px; width: 50vw; transform: translateX(-50%)"
+        >
+          No file - {{ file.name }} ({{ props.mode }})
+        </div>
       </div>
     </div>
   </div>

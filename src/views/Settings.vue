@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import { songCollection, setlistCollection } from '@/plugins/firebase'
+import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
+import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref } from 'vue'
+import VuePdfEmbed from 'vue-pdf-embed'
 import { useCollection } from 'vuefire'
 
 const { baseDirectory, chooseNewSheetBaseDirectory } = useSheetBaseDirectory()
@@ -29,6 +31,42 @@ const filteredSongs = computed(() => {
 
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
+
+const currentDrumsFile = ref({
+  dataURL: null as string | null,
+  loading: false,
+  pageCount: 1,
+})
+
+async function setCurrentDrumsFile(song: Song) {
+  currentDrumsFile.value.loading = true
+  currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
+}
+
+async function saveDrumsFile(song: Song, file: File) {
+  if (!file) return
+  const storage = getStorage()
+  const fileRef = firebaseRef(storage, `drums/${file.name}`)
+  deleteDrumsFile(song) // Remove old file if exists
+  await uploadBytes(fileRef, file, {
+    customMetadata: {
+      originalFileName: file.name,
+    },
+  })
+  song.drumsPdfStorageRef = fileRef.fullPath
+  await saveSong(song)
+  setCurrentDrumsFile(song)
+}
+
+async function deleteDrumsFile(song: Song) {
+  if (!song.drumsPdfStorageRef) return
+  const storage = getStorage()
+  const fileRef = firebaseRef(storage, song.drumsPdfStorageRef)
+  deleteObject(fileRef)
+  song.drumsPdfStorageRef = ''
+  currentDrumsFile.value.dataURL = null
+  await saveSong(song)
+}
 </script>
 
 <template>
@@ -77,6 +115,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
           { key: 'bpm', title: 'BPM' },
           { key: 'duration', title: 'Duration' },
           { key: 'ibi_instrument', title: 'Ibi Instrument' },
+          { key: 'drumsPdfStorageRef', title: 'Drums PDF' },
           { key: 'lyrics', title: 'Lyrics' },
           { key: 'nadine_moderation', title: 'Moderation' },
         ]"
@@ -146,7 +185,9 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
               variant="outlined"
               density="compact"
               hide-details
-            />:<v-text-field
+            />
+            :
+            <v-text-field
               :model-value="item.duration ? item.duration % 60 : ''"
               @update:model-value="
                 (value) => {
@@ -177,10 +218,56 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
             hide-details
           />
         </template>
-        <template #item.lyrics="{ item }">
-          <v-dialog max-width="600px" close-on-back>
+        <template #item.drumsPdfStorageRef="{ item }">
+          <v-dialog max-width="600px" max-height="80vh" close-on-back>
             <template #activator="{ props }">
-              <v-btn v-bind="props" color="primary" variant="text">Edit Lyrics</v-btn>
+              <div class="d-flex flex-row align-center ga-2">
+                <v-btn v-bind="props" color="info" variant="tonal">Edit Drums</v-btn>
+                <span v-if="item.drumsPdfStorageRef">🥁</span>
+              </div>
+            </template>
+            <v-card>
+              <v-card-title>Edit Drums - {{ item.name || item.filename }}</v-card-title>
+              <v-card-text>
+                <v-file-input
+                  type="file"
+                  variant="outlined"
+                  density="compact"
+                  label="Select new drums file"
+                  hide-details
+                  accept=".pdf"
+                  @input="(evt:InputEvent) => saveDrumsFile(item, (evt.target as HTMLInputElement).files?.[0]!)"
+                />
+
+                <template v-if="item.drumsPdfStorageRef">
+                  <h4 class="mt-4">Current Drums PDF:</h4>
+                  <div class="d-flex flex-wrap justify-center ga-2">
+                    <vue-pdf-embed
+                      class="border"
+                      v-for="page in currentDrumsFile.pageCount"
+                      @vue:before-mount="setCurrentDrumsFile(item)"
+                      @vue:before-unmount="currentDrumsFile.dataURL = null"
+                      @loaded="
+                        ({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))
+                      "
+                      :height="200"
+                      :page="page"
+                      :source="currentDrumsFile.dataURL"
+                    />
+                  </div>
+                  <v-btn color="error" @click="deleteDrumsFile(item)" class="mt-2">Remove Drums PDF</v-btn>
+                </template>
+              </v-card-text>
+            </v-card>
+          </v-dialog>
+        </template>
+        <template #item.lyrics="{ item }">
+          <v-dialog max-width="600px" max-height="80vh" close-on-back>
+            <template #activator="{ props }">
+              <div class="d-flex flex-row align-center ga-2">
+                <v-btn v-bind="props" color="primary" variant="tonal">Edit Lyrics</v-btn>
+                <span v-if="item.lyrics">🎤</span>
+              </div>
             </template>
             <v-card>
               <v-card-title>Edit Lyrics - {{ item.name || item.filename }}</v-card-title>
@@ -198,9 +285,12 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
           </v-dialog>
         </template>
         <template #item.nadine_moderation="{ item }">
-          <v-dialog max-width="600px" close-on-back>
+          <v-dialog max-width="600px" max-height="80vh" close-on-back>
             <template #activator="{ props }">
-              <v-btn v-bind="props" color="primary" variant="text">Edit Moderation</v-btn>
+              <div class="d-flex flex-row align-center ga-2">
+                <v-btn v-bind="props" color="primary" variant="tonal">Edit Moderation</v-btn>
+                <span v-if="item.nadine_moderation" style="margin-left: 4px">💬</span>
+              </div>
             </template>
             <v-card>
               <v-card-title>Edit Moderation - {{ item.name || item.filename }}</v-card-title>

@@ -31,7 +31,12 @@ function formatDuration(duration?: number) {
       </div>
     </h2>
     <v-row class="mt-2">
-      <v-col v-for="setlist in setlists" :key="setlist.id" cols="12" sm="6">
+      <v-col
+        v-for="setlist in [...setlists].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))"
+        :key="setlist.id"
+        cols="12"
+        sm="6"
+      >
         <v-card height="100%" @click.stop="$router.push(`/setlist/${setlist.id}/overview`)" class="cursor-pointer">
           <div class="d-flex justify-space-between align-center flex-wrap">
             <v-card-title style="width: 0; flex: 1">{{ setlist.name || 'Untitled' }}</v-card-title>
@@ -69,7 +74,7 @@ function formatDuration(duration?: number) {
                 color="secondary"
                 variant="flat"
                 style="flex: 1; flex-basis: 0px"
-                prepend-icon="fa fa-align-left"
+                prepend-icon="fa fa-microphone"
                 @click.stop="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'lyrics' } })"
               >
                 Lyrics
@@ -83,7 +88,7 @@ function formatDuration(duration?: number) {
               >
                 Chords
               </v-btn>
-              <!-- <v-btn
+              <v-btn
                 color="info"
                 variant="flat"
                 style="flex: 1; flex-basis: 0px"
@@ -91,11 +96,13 @@ function formatDuration(duration?: number) {
                 @click.stop="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'drums' } })"
               >
                 Drums
-              </v-btn> -->
+              </v-btn>
             </v-btn-group>
-            <v-chip size="small" v-for="song in setlist.songs" :key="song">{{
-              formatSongName(songs.find((s) => s.id == song)?.name || songs.find((s) => s.id == song)?.filename || '')
-            }}</v-chip>
+            <v-chip size="small" v-for="song in setlist.songs" :key="song">
+              {{
+                formatSongName(songs.find((s) => s.id == song)?.name || songs.find((s) => s.id == song)?.filename || '')
+              }}
+            </v-chip>
           </v-card-text>
         </v-card>
       </v-col>

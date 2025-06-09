@@ -5,16 +5,16 @@ import AppLayout from '@/layouts/AppLayout.vue'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 
-import { getStorage, ref as firebaseRef, uploadBytes } from 'firebase/storage'
+import { ref as firebaseRef, getStorage, uploadBytes } from 'firebase/storage'
 
 import { setlistCollection, songCollection, withoutFields } from '@/plugins/firebase'
 import { Setlist } from '@/types'
 import { addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { ref, watch } from 'vue'
 
+import { flatTree } from '@/helpers'
 import { useRoute, useRouter } from 'vue-router'
 import { useCollection, useDocument } from 'vuefire'
-import { flatTree } from '@/helpers'
 
 const songsDocs = useCollection(songCollection)
 
@@ -95,6 +95,7 @@ async function createSetlist() {
     const updatedSetlist = {
       ...withoutFields(setlist.value, 'id', 'songs'),
       songs: currentSongs.value.map((filename) => songsDocs.value.find((doc) => doc.filename == filename)!.id!),
+      updatedAt: new Date().toISOString(),
     }
 
     if (formMode == 'create') await addDoc(setlistCollection, updatedSetlist)
@@ -142,16 +143,14 @@ const songs = useCollection(songCollection)
 
 <template>
   <AppLayout>
-    <h2 class="d-flex justify-space-between">
-      <div>
-        <Backbutton :to="HOME_ROUTE" />
-        {{ formMode == 'create' ? 'Create' : 'Update' }} Setlist
-      </div>
-      <div>
+    <h2 class="d-flex">
+      <Backbutton :to="HOME_ROUTE" />
+      <div class="flex-grow-1 flex-shrink-0">{{ formMode == 'create' ? 'Create' : 'Update' }} Setlist</div>
+      <div class="d-flex flex-wrap justify-end ga-3 flex-shrink-1">
         <v-btn v-if="formMode == 'edit'" @click="deleteSetlist" color="error" class="ms-2" prepend-icon="fas fa-trash">
           Delete
         </v-btn>
-        <v-btn :loading="loading" color="primary" @click="createSetlist" class="ms-2">
+        <v-btn :loading="loading" color="primary" @click="createSetlist" prepend-icon="fas fa-save" class="ms-2">
           {{ formMode == 'create' ? 'Create' : 'Update' }}
         </v-btn>
       </div>

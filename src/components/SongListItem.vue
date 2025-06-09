@@ -31,10 +31,18 @@ function formatDuration(duration?: number) {
     </div>
     <template v-slot:append>
       <span v-if="song.duration" class="bg-grey text-white rounded px-1">
-        <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ formatDuration(song.duration) }}
+        <v-icon size="sm" icon="far fa-clock mb-1 " />
+        {{ formatDuration(song.duration) }}
       </span>
-      <v-btn v-if="removeable" @click="$emit('remove')" icon="fas fa-close" variant="plain" style="height: 32px" />
-      <v-btn v-if="draggable" class="drag-handle" icon="fas fa-grip" variant="plain" style="height: 32px" />
+      <v-btn
+        v-if="removeable"
+        class="me-n3"
+        @click="$emit('remove')"
+        icon="fas fa-close"
+        variant="plain"
+        style="height: 32px"
+      />
+      <v-btn v-if="draggable" class="drag-handle me-n3" icon="fas fa-grip" variant="plain" style="height: 32px" />
     </template>
   </v-list-item>
 </template>

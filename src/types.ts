@@ -8,6 +8,7 @@ export type Setlist = {
   id?: string
   name?: string
   songs: Song['filename'][]
+  updatedAt?: string
 }
 
 export type Song = {
@@ -15,6 +16,7 @@ export type Song = {
   filename: string
   pdfStorageSHA?: string
   pdfStorageRef?: string
+  drumsPdfStorageRef?: string
   name?: string
   ibi_instrument?: 'Bass' | 'A.Git' | 'E.Git'
   nadine_moderation?: string

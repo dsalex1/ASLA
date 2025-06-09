@@ -77,6 +77,8 @@ function print() {
       </body>
     </html>
   `
+
+  iframe.contentWindow?.focus()
   iframe.contentWindow?.print()
   document.body.removeChild(iframe)
 }
@@ -90,7 +92,7 @@ function print() {
         {{ setlistData?.name }}
       </div>
       <div>
-        <v-btn color="primary" @click="print" class="ms-2"> Print </v-btn>
+        <v-btn color="primary" @click="print" class="ms-2">Print</v-btn>
       </div>
     </h2>
     <div class="w-100 d-flex justify-center">
