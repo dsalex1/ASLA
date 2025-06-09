@@ -145,12 +145,12 @@ const songs = useCollection(songCollection)
   <AppLayout>
     <h2 class="d-flex">
       <Backbutton :to="HOME_ROUTE" />
-      <div class="flex-grow-1 flex-shrink-0">{{ formMode == 'create' ? 'Create' : 'Update' }} Setlist</div>
-      <div class="d-flex flex-wrap justify-end ga-3 flex-shrink-1">
+      <div style="flex: 1">{{ formMode == 'create' ? 'Create' : 'Update' }} Setlist</div>
+      <div class="d-flex flex-wrap justify-end ga-3">
         <v-btn v-if="formMode == 'edit'" @click="deleteSetlist" color="error" class="ms-2" prepend-icon="fas fa-trash">
           Delete
         </v-btn>
-        <v-btn :loading="loading" color="primary" @click="createSetlist" prepend-icon="fas fa-save" class="ms-2">
+        <v-btn :loading="loading" color="primary" @click="createSetlist" prepend-icon="fas fa-save" class="ms-2 mb-2">
           {{ formMode == 'create' ? 'Create' : 'Update' }}
         </v-btn>
       </div>

@@ -86,9 +86,11 @@ function print() {
 
 <template>
   <AppLayout>
-    <h2 class="d-flex justify-space-between">
+    <h2 class="d-flex">
       <div>
         <Backbutton :to="HOME_ROUTE" />
+      </div>
+      <div style="flex: 1">
         {{ setlistData?.name }}
       </div>
       <div>

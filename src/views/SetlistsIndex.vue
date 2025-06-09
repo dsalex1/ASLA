@@ -21,7 +21,7 @@ function formatDuration(duration?: number) {
   <AppLayout>
     <h2 class="d-flex justify-space-between">
       <div>Setlists</div>
-      <div class="d-flex flex-wrap justify-end">
+      <div class="d-flex flex-wrap justify-end ga-2">
         <RouterLink to="/settings">
           <v-btn color="secondary" class="ms-2" prepend-icon="fas fa-cog">settings</v-btn>
         </RouterLink>

@@ -2,11 +2,11 @@
 import { computed } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
-//@ts-ignore
 import SongListItem from '@/components/SongListItem.vue'
 import { filterTree, mapTree, Treelike } from '@/helpers'
 import { songCollection } from '@/plugins/firebase'
 import { useVModel } from '@vueuse/core'
+//@ts-ignore
 import { Drag, DropList } from 'vue-easy-dnd'
 import { useCollection } from 'vuefire'
 
