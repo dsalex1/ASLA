@@ -80,7 +80,6 @@ function print() {
 
   iframe.contentWindow?.focus()
   iframe.contentWindow?.print()
-  document.body.removeChild(iframe)
 }
 </script>
 
