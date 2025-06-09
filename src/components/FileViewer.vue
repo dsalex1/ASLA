@@ -90,6 +90,58 @@ watchEffect(() => {
 const showLyrics = ref(props.mode == 'lyrics' ? true : false)
 const fontSize = ref(16)
 
+// Autoscroll for lyrics
+const lyricsContainer = ref<HTMLElement | null>(null)
+const autoScroll = ref(false)
+let scrollAnimationFrame: number | null = null
+
+function scrollLyricsToBottom(duration: number, offset = 0) {
+  if (!lyricsContainer.value) return
+  const el = lyricsContainer.value
+  const start = performance.now() + offset * 1000
+  const startScroll = el.scrollTop
+  const endScroll = el.scrollHeight - el.clientHeight
+  if (endScroll <= 0) return
+  function step(now: number) {
+    const elapsed = (now - start) / 1000
+    const progress = Math.max(Math.min(elapsed / (duration - offset), 1), 0)
+    const nextScrollPos = Math.round(startScroll + (endScroll - startScroll) * progress)
+    // cancel if user scrolled more than 10px
+    if (el.scrollTop - nextScrollPos > 10) {
+      autoScroll.value = false
+      if (scrollAnimationFrame) {
+        cancelAnimationFrame(scrollAnimationFrame)
+        scrollAnimationFrame = null
+      }
+      return
+    }
+    if (el.scrollTop != nextScrollPos) {
+      el.scrollTop = nextScrollPos
+    }
+    if (progress < 1) {
+      scrollAnimationFrame = requestAnimationFrame(step)
+    }
+  }
+  if (scrollAnimationFrame) cancelAnimationFrame(scrollAnimationFrame)
+  scrollAnimationFrame = requestAnimationFrame(step)
+}
+
+watch([currentFileIndex, showLyrics, autoScroll], ([currentFileIndex, showLyrics, autoScroll]) => {
+  if (scrollAnimationFrame) {
+    cancelAnimationFrame(scrollAnimationFrame)
+    scrollAnimationFrame = null
+  }
+  if (autoScroll && showLyrics) {
+    // Wait for DOM update
+    setTimeout(() => {
+      scrollLyricsToBottom(
+        (props.songs[currentFileIndex].duration || 150) - 40,
+        lyricsContainer.value?.scrollTop == 0 ? 20 : 0
+      ) // arrive 40s before the end, and start after 20s if were at the start
+    }, 100)
+  }
+})
+
 function formatDuration(duration?: number) {
   return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
 }
@@ -131,7 +183,9 @@ function formatDuration(duration?: number) {
     <div class="w-100 text-center">
       {{ getSongInformation(songs[currentFileIndex]) }}
       <span v-if="songs[currentFileIndex]?.duration">
-        - <v-icon size="sm" icon="far fa-clock mb-1 " /> {{ formatDuration(songs[currentFileIndex].duration) }}
+        -
+        <v-icon size="sm" icon="far fa-clock mb-1 " />
+        {{ formatDuration(songs[currentFileIndex].duration) }}
       </span>
       <v-btn
         v-if="songs[currentFileIndex]?.lyrics && props.mode != 'lyrics'"
@@ -150,16 +204,21 @@ function formatDuration(duration?: number) {
           density="compact"
           icon="fas fa-minus"
           @click="fontSize = Math.max(12, fontSize - 2)"
-          v-if="showLyrics"
         />
-        <span v-if="showLyrics" class="mx-2">{{ fontSize }}</span>
+        <span class="mx-2">{{ fontSize }}</span>
         <v-btn
           class="me-2"
           variant="tonal"
           density="compact"
           icon="fas fa-plus"
           @click="fontSize = Math.min(48, fontSize + 2)"
-          v-if="showLyrics"
+        />
+        <v-btn
+          class="ms-2"
+          variant="tonal"
+          density="compact"
+          :icon="autoScroll ? 'fas fa-pause' : 'fas fa-play'"
+          @click="autoScroll = !autoScroll"
         />
       </template>
     </div>
@@ -183,6 +242,7 @@ function formatDuration(duration?: number) {
         v-if="showLyrics"
         class="mt-2 d-flex flex-column align-center"
         :style="{ zIndex: 20, height: '100%', overflowY: 'scroll' }"
+        ref="lyricsContainer"
       >
         <div class="bg-white px-5 mb-2 w-100" v-if="songs[currentFileIndex]?.nadine_moderation">
           <h2 class="mb-2">Moderation</h2>
@@ -220,7 +280,7 @@ function formatDuration(duration?: number) {
         <div
           v-if="!file.dataUrl"
           class="text-center"
-          style="min-width: 100px; width: 50vw; transform: translateX(-50%)"
+          style="min-width: 100px; width: 50dvw; transform: translateX(-50%)"
         >
           No file - {{ file.name }} ({{ props.mode }})
         </div>

@@ -1,3 +1,8 @@
 .v-btn .v-icon {
     --v-icon-size-multiplier: 0.785 !important;
 }
+
+html {
+  overscroll-behavior: none;
+  overflow: hidden;
+}

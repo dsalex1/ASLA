@@ -1,6 +1,6 @@
 <script setup lang="ts"></script>
 <template>
-  <v-app style="width: 100vw; height: 100vh; overflow: hidden">
+  <v-app style="width: 100dvw; height: 100dvh; overflow: hidden">
     <slot></slot>
   </v-app>
 </template>

@@ -219,7 +219,7 @@ async function deleteDrumsFile(song: Song) {
           />
         </template>
         <template #item.drumsPdfStorageRef="{ item }">
-          <v-dialog max-width="600px" max-height="80vh" close-on-back>
+          <v-dialog max-width="600px" max-height="80dvh" close-on-back>
             <template #activator="{ props }">
               <div class="d-flex flex-row align-center ga-2">
                 <v-btn v-bind="props" color="info" variant="tonal">Edit Drums</v-btn>
@@ -262,7 +262,7 @@ async function deleteDrumsFile(song: Song) {
           </v-dialog>
         </template>
         <template #item.lyrics="{ item }">
-          <v-dialog max-width="600px" max-height="80vh" close-on-back>
+          <v-dialog max-width="600px" max-height="80dvh" close-on-back>
             <template #activator="{ props }">
               <div class="d-flex flex-row align-center ga-2">
                 <v-btn v-bind="props" color="primary" variant="tonal">Edit Lyrics</v-btn>
@@ -285,7 +285,7 @@ async function deleteDrumsFile(song: Song) {
           </v-dialog>
         </template>
         <template #item.nadine_moderation="{ item }">
-          <v-dialog max-width="600px" max-height="80vh" close-on-back>
+          <v-dialog max-width="600px" max-height="80dvh" close-on-back>
             <template #activator="{ props }">
               <div class="d-flex flex-row align-center ga-2">
                 <v-btn v-bind="props" color="primary" variant="tonal">Edit Moderation</v-btn>
