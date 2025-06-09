@@ -181,7 +181,7 @@ function formatDuration(duration?: number) {
 
     <!-- song infos-->
     <div class="w-100 text-center">
-      {{ getSongInformation(songs[currentFileIndex]) }}
+      <span v-html="getSongInformation(songs[currentFileIndex])" />
       <span v-if="songs[currentFileIndex]?.duration">
         -
         <v-icon size="sm" icon="far fa-clock mb-1 " />

@@ -41,7 +41,7 @@ export const getSongInformation = (song: Song) =>
   [
     song?.key_signature,
     song?.bpm && `${song?.bpm} bpm`,
-    song?.ibi_instrument && `Ibi ${song?.ibi_instrument}`,
+    song?.ibi_instrument && `<b>Ibi ${song?.ibi_instrument}</b>`,
     song.nadine_moderation && '💬',
   ]
     .filter(Boolean)

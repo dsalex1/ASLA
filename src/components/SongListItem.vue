@@ -24,9 +24,7 @@ function formatDuration(duration?: number) {
       <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
       <div class="d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
-        <div class="text-grey me-2">
-          {{ getSongInformation(song) }}
-        </div>
+        <div class="text-grey me-2" v-html="getSongInformation(song)" />
       </div>
     </div>
     <template v-slot:append>
