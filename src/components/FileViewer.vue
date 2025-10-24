@@ -131,7 +131,7 @@ function scrollLyricsToBottom(duration: number, offset = 0) {
 
 const currentSong = computed(() => props.songs[currentFileIndex.value])
 
-watch([currentFileIndex, showLyrics, autoScroll], ([currentFileIndex, showLyrics, autoScroll]) => {
+watch([currentSong, showLyrics, autoScroll], ([currentSong, showLyrics, autoScroll]) => {
   if (scrollAnimationFrame) {
     cancelAnimationFrame(scrollAnimationFrame)
     scrollAnimationFrame = null
@@ -139,8 +139,8 @@ watch([currentFileIndex, showLyrics, autoScroll], ([currentFileIndex, showLyrics
   if (autoScroll && showLyrics) {
     // Wait for DOM update
     setTimeout(() => {
-      if (!currentSong || !('duration' in currentSong.value)) return
-      scrollLyricsToBottom((currentSong.value.duration || 150) - 40, lyricsContainer.value?.scrollTop == 0 ? 20 : 0) // arrive 40s before the end, and start after 20s if were at the start
+      if (!currentSong || !('duration' in currentSong)) return
+      scrollLyricsToBottom((currentSong.duration || 150) - 40, lyricsContainer.value?.scrollTop == 0 ? 20 : 0) // arrive 40s before the end, and start after 20s if were at the start
     }, 100)
   }
 })
@@ -191,7 +191,7 @@ function formatDuration(duration?: number) {
         {{ formatDuration(currentSong.duration) }}
       </span>
       <v-btn
-        v-if="songs[currentFileIndex]?.lyrics && props.mode != 'lyrics'"
+        v-if="currentSong?.lyrics && props.mode != 'lyrics'"
         class="ms-2"
         variant="tonal"
         density="compact"
