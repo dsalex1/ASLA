@@ -7,8 +7,13 @@
 export type Setlist = {
   id?: string
   name?: string
-  songs: Song['filename'][]
+  songs: (NonNullable<Song['id']> | CustomSetlistEntry)[]
   updatedAt?: string
+}
+
+export type CustomSetlistEntry = {
+  title: string
+  description: string
 }
 
 export type Song = {

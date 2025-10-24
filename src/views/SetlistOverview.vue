@@ -18,7 +18,9 @@ const setlistData = useDocument(doc(setlistCollection, setlistId))
 const songsCollection = useCollection(songCollection)
 
 const songs = computed(() =>
-  (setlistData.data.value?.songs || []).map((id) => songsCollection.value.find((s) => s.id == id)!).filter((f) => f)
+  (setlistData.data.value?.songs || [])
+    .map((entry) => (typeof entry === 'string' ? songsCollection.value.find((s) => s.id == entry)! : entry))
+    .filter((f) => f)
 )
 
 function print() {
@@ -65,9 +67,9 @@ function print() {
                       <span style="font-size: 16px;font-weight:normal">
                       ${index + 1}.
                       </span>
-                      ${song.name}
+                      ${'name' in song ? song.name : 'title' in song ? song.title : ''}
                       <span style="font-size: 16px;font-weight:normal">
-                        ${getSongInformation(song)}
+                        ${'name' in song ? getSongInformation(song) : 'title' in song ? song.description : ''}
                       </span>
                   </div>`
               )
@@ -98,7 +100,9 @@ function print() {
     </h2>
     <div class="w-100 d-flex justify-center">
       <v-list density="compact">
-        <SongListItem v-for="(song, index) in songs" :index="index + 1" :song="song" />
+        <template v-for="(song, index) in songs">
+          <SongListItem :index="index + 1" :song="song" />
+        </template>
       </v-list>
     </div>
   </AppLayout>

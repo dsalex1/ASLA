@@ -19,7 +19,9 @@ const setlistData = useDocument(doc(setlistCollection, setlistId))
 const songsCollection = useCollection(songCollection)
 
 const songs = computed(() =>
-  (setlistData.data.value?.songs || []).map((id) => songsCollection.value.find((s) => s.id == id)!).filter((f) => f)
+  (setlistData.data.value?.songs || [])
+    .map((entry) => (typeof entry === 'string' ? songsCollection.value.find((s) => s.id == entry)! : entry))
+    .filter((f) => f)
 )
 </script>
 

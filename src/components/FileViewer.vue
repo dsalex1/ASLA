@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
-import { Song } from '@/types'
+import { CustomSetlistEntry, Song } from '@/types'
 import { useSwipe, useWindowSize } from '@vueuse/core'
 import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, ref, watch, watchEffect } from 'vue'
@@ -9,7 +9,7 @@ import VuePdfEmbed from 'vue-pdf-embed'
 import { VBtn } from 'vuetify/components'
 
 const props = defineProps<{
-  songs: Song[]
+  songs: (Song | CustomSetlistEntry)[]
   mode?: 'lyrics' | 'chords' | 'drums'
 }>()
 
@@ -19,7 +19,8 @@ const flattendPdfTree = computed(() =>
   flatTree(mapTree(pdfTree.value, (f) => ({ ...f, handle: f.handle as FileSystemFileHandle })))
 )
 
-async function resolveFileUrl(song: Song) {
+async function resolveFileUrl(song: Song | CustomSetlistEntry) {
+  if (!('pdfStorageRef' in song)) return ''
   if (props.mode == 'lyrics') return ''
   if (props.mode == 'chords' && song.pdfStorageRef)
     return await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
@@ -41,8 +42,8 @@ watch(
     fileContents.value = await Promise.all(
       props.songs.map(async (song) => ({
         pageCount: props.mode == 'lyrics' ? 1 : undefined,
-        ...(fileContents.value?.find((f) => f.name === song.name) ?? {}), //if already loaded overwrite pageCount
-        name: song.name || 'untitled',
+        ...(fileContents.value?.find((f) => f.name === ('name' in song ? song.name : '')) ?? {}), //if already loaded overwrite pageCount
+        name: 'name' in song && song.name ? song.name : 'title' in song ? song.title : 'untitled',
         dataUrl: props.mode == 'lyrics' ? '' : await resolveFileUrl(song),
       }))
     )
@@ -50,7 +51,9 @@ watch(
   { immediate: true }
 )
 
-const { height } = useWindowSize()
+const { height, width } = useWindowSize()
+
+const pdfHeight = computed(() => Math.min(width.value * Math.sqrt(2), height.value - 45 - 25))
 
 const currentFileIndex = ref(0)
 const currentFilePage = ref(1)
@@ -126,6 +129,8 @@ function scrollLyricsToBottom(duration: number, offset = 0) {
   scrollAnimationFrame = requestAnimationFrame(step)
 }
 
+const currentSong = computed(() => props.songs[currentFileIndex.value])
+
 watch([currentFileIndex, showLyrics, autoScroll], ([currentFileIndex, showLyrics, autoScroll]) => {
   if (scrollAnimationFrame) {
     cancelAnimationFrame(scrollAnimationFrame)
@@ -134,10 +139,8 @@ watch([currentFileIndex, showLyrics, autoScroll], ([currentFileIndex, showLyrics
   if (autoScroll && showLyrics) {
     // Wait for DOM update
     setTimeout(() => {
-      scrollLyricsToBottom(
-        (props.songs[currentFileIndex].duration || 150) - 40,
-        lyricsContainer.value?.scrollTop == 0 ? 20 : 0
-      ) // arrive 40s before the end, and start after 20s if were at the start
+      if (!currentSong || !('duration' in currentSong.value)) return
+      scrollLyricsToBottom((currentSong.value.duration || 150) - 40, lyricsContainer.value?.scrollTop == 0 ? 20 : 0) // arrive 40s before the end, and start after 20s if were at the start
     }, 100)
   }
 })
@@ -180,12 +183,12 @@ function formatDuration(duration?: number) {
     </div>
 
     <!-- song infos-->
-    <div class="w-100 text-center">
-      <span v-html="getSongInformation(songs[currentFileIndex])" />
-      <span v-if="songs[currentFileIndex]?.duration">
+    <div class="w-100 text-center" v-if="currentSong && 'name' in currentSong">
+      <span v-html="getSongInformation(currentSong)" />
+      <span v-if="currentSong?.duration">
         -
         <v-icon size="sm" icon="far fa-clock mb-1 " />
-        {{ formatDuration(songs[currentFileIndex].duration) }}
+        {{ formatDuration(currentSong.duration) }}
       </span>
       <v-btn
         v-if="songs[currentFileIndex]?.lyrics && props.mode != 'lyrics'"
@@ -239,32 +242,35 @@ function formatDuration(duration?: number) {
       <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
       <div
         :key="currentFileIndex"
-        v-if="showLyrics"
+        v-if="showLyrics && (currentSong === undefined || 'name' in currentSong)"
         class="mt-2 d-flex flex-column align-center"
         :style="{ zIndex: 20, height: '100%', overflowY: 'scroll' }"
         ref="lyricsContainer"
       >
-        <div class="bg-white px-5 mb-2 w-100" v-if="songs[currentFileIndex]?.nadine_moderation">
+        <div class="bg-white px-5 mb-2 w-100" v-if="currentSong?.nadine_moderation">
           <h2 class="mb-2">Moderation</h2>
           <div style="white-space: pre-wrap" :style="{ fontSize: fontSize + 'px' }">
-            {{ songs[currentFileIndex]?.nadine_moderation }}
+            {{ currentSong?.nadine_moderation }}
           </div>
         </div>
 
         <div class="bg-white px-5 pb-5">
-          <h2 class="mb-2">{{ songs[currentFileIndex]?.name || 'Untitled' }}</h2>
-          <div
-            style="white-space: pre-wrap"
-            v-if="songs[currentFileIndex]?.lyrics"
-            :style="{ fontSize: fontSize + 'px' }"
-          >
-            {{ songs[currentFileIndex].lyrics }}
+          <h2 class="mb-2">{{ currentSong?.name || 'Untitled' }}</h2>
+          <div style="white-space: pre-wrap" v-if="currentSong?.lyrics" :style="{ fontSize: fontSize + 'px' }">
+            {{ currentSong?.lyrics }}
           </div>
           <div v-else class="text-grey">No lyrics yet</div>
         </div>
       </div>
+      <div v-if="'title' in currentSong" style="width: 0px">
+        <div class="text-center text-h4" style="min-width: 100px; width: 50dvw; transform: translateX(-50%)">
+          {{ currentSong.title }}
+          <br />
+          <span class="text-h5">{{ currentSong.description }}</span>
+        </div>
+      </div>
       <div
-        v-if="props.mode != 'lyrics'"
+        v-if="props.mode != 'lyrics' && 'name' in currentSong"
         v-for="(file, i) in fileContents"
         :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
         style="width: 0px"
@@ -272,7 +278,7 @@ function formatDuration(duration?: number) {
         <vue-pdf-embed
           v-for="pageIndex in file.pageCount || 1"
           v-show="pageIndex === currentFilePage"
-          :height="height - 45 - 25"
+          :height="pdfHeight"
           :page="pageIndex"
           @loaded="({ numPages }) => (file.pageCount = numPages)"
           :source="file.dataUrl"
@@ -282,7 +288,7 @@ function formatDuration(duration?: number) {
           class="text-center"
           style="min-width: 100px; width: 50dvw; transform: translateX(-50%)"
         >
-          No file - {{ file.name }} ({{ props.mode }})
+          No file - {{ file.name }} - ({{ props.mode }})
         </div>
       </div>
     </div>

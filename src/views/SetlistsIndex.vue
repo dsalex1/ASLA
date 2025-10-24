@@ -98,9 +98,13 @@ function formatDuration(duration?: number) {
                 Drums
               </v-btn>
             </v-btn-group>
-            <v-chip size="small" v-for="song in setlist.songs" :key="song">
+            <v-chip size="small" v-for="song in setlist.songs" :key="JSON.stringify(song)">
               {{
-                formatSongName(songs.find((s) => s.id == song)?.name || songs.find((s) => s.id == song)?.filename || '')
+                typeof song === 'string'
+                  ? formatSongName(
+                      songs.find((s) => s.id == song)?.name || songs.find((s) => s.id == song)?.filename || ''
+                    )
+                  : song.title || 'Custom Entry'
               }}
             </v-chip>
           </v-card-text>

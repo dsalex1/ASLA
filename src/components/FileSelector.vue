@@ -9,10 +9,11 @@ import { useVModel } from '@vueuse/core'
 //@ts-ignore
 import { Drag, DropList } from 'vue-easy-dnd'
 import { useCollection } from 'vuefire'
+import { CustomSetlistEntry } from '@/types'
 
 const props = defineProps<{
   files: Treelike<{ name: string }>
-  modelValue: string[]
+  modelValue: (string | CustomSetlistEntry)[]
 }>()
 const emit = defineEmits(['update:modelValue'])
 
@@ -46,6 +47,7 @@ function getSongByFilename(filename: string) {
           <template v-slot:item="{ item, index, reorder }">
             <drag :key="item" handle=".drag-handle">
               <SongListItem
+                v-if="typeof item === 'string'"
                 :active="reorder"
                 :index="index + 1"
                 :song="getSongByFilename(item)!"
@@ -53,6 +55,34 @@ function getSongByFilename(filename: string) {
                 draggable
                 removeable
               />
+              <v-list-item
+                v-else
+                :key="index"
+                class="d-flex align-center mb-2 custom-entry"
+                style="width: 100%; justify-content: space-between"
+              >
+                <!-- two inputs for title and description -->
+                <div class="d-flex align-center pt-2">
+                  <v-text-field variant="outlined" density="compact" hide-details v-model="item.title" label="Title" />
+                  <v-text-field
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    v-model="item.description"
+                    label="Description"
+                  />
+                </div>
+                <template #append>
+                  <v-btn
+                    class="me-n3"
+                    @click="selectedFiles.splice(selectedFiles.indexOf(item), 1)"
+                    icon="fas fa-close"
+                    variant="plain"
+                    style="height: 32px"
+                  />
+                  <v-btn class="drag-handle me-n3" icon="fas fa-grip" variant="plain" style="height: 32px" />
+                </template>
+              </v-list-item>
             </drag>
           </template>
           <template v-slot:feedback="{ data }">
@@ -67,6 +97,12 @@ function getSongByFilename(filename: string) {
       </v-list>
     </v-col>
     <v-col cols="12" sm="6" orderSm="1">
+      <div @click="selectedFiles.push({ title: '', description: '' })" class="mb-2">
+        <drag :data="{ title: '', description: '' }" class="item d-flex align-center" handle=".drag-handle">
+          <div>Custom Entry</div>
+          <v-btn class="drag-handle me-n6" icon="fas fa-grip" variant="plain" style="height: 32px" />
+        </drag>
+      </div>
       <h3>Available files</h3>
       <v-treeview :items="filteredTree" density="compact" class="disable-active-underlay">
         <template v-slot:item="{ props }">
@@ -86,3 +122,10 @@ function getSongByFilename(filename: string) {
     </v-col>
   </v-row>
 </template>
+
+<style>
+.custom-entry .v-list-item__content {
+  flex: 1;
+  width: 0px;
+}
+</style>

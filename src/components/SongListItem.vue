@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { getSongInformation } from '@/helpers'
-import { Song } from '@/types'
+import { CustomSetlistEntry, Song } from '@/types'
 
 defineProps<{
   index: number
-  song: Song
+  song: Song | CustomSetlistEntry
   draggable?: boolean
   removeable?: boolean
 }>()
@@ -20,14 +20,21 @@ function formatDuration(duration?: number) {
 
 <template>
   <v-list-item color="primary">
-    <div class="d-flex align-center">
+    <div class="d-flex align-center" v-if="'name' in song">
       <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
       <div class="d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
         <div class="text-grey me-2" v-html="getSongInformation(song)" />
       </div>
     </div>
-    <template v-slot:append>
+    <div class="d-flex align-center" v-if="'title' in song">
+      <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
+      <div class="d-inline-flex flex-wrap">
+        <div class="me-1">{{ song?.title }}</div>
+        <div class="text-grey me-2">{{ song?.description }}</div>
+      </div>
+    </div>
+    <template v-slot:append v-if="'name' in song">
       <span v-if="song.duration" class="bg-grey text-white rounded px-1">
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(song.duration) }}

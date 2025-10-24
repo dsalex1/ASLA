@@ -8,7 +8,7 @@ import { HOME_ROUTE } from '@/router'
 import { ref as firebaseRef, getStorage, uploadBytes } from 'firebase/storage'
 
 import { setlistCollection, songCollection, withoutFields } from '@/plugins/firebase'
-import { Setlist } from '@/types'
+import { CustomSetlistEntry, Setlist } from '@/types'
 import { addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { ref, watch } from 'vue'
 
@@ -30,7 +30,9 @@ if (setlistData)
   watch(setlistData, (data) => {
     if (!data) return
     setlist.value = data
-    currentSongs.value = data.songs.map((songId: string) => songsDocs.value.find((doc) => doc.id == songId)!.filename)
+    currentSongs.value = data.songs.map((song) =>
+      typeof song === 'string' ? songsDocs.value.find((doc) => doc.id == song)!.filename : song
+    )
   })
 
 const setlist = ref<Omit<Setlist, 'songs'>>({
@@ -38,7 +40,7 @@ const setlist = ref<Omit<Setlist, 'songs'>>({
   name: '',
 })
 
-const currentSongs = ref<string[]>([])
+const currentSongs = ref<(string | CustomSetlistEntry)[]>([])
 
 function arbuf2hex(buffer: ArrayBuffer) {
   var hexCodes = []
@@ -67,6 +69,7 @@ async function createSetlist() {
     //make sure all songs in the setlist are synced with the database before saving
     await Promise.all(
       currentSongs.value.map(async (filename) => {
+        if (typeof filename !== 'string') return // skip custom entries
         // if the song is not in the database, identified by filename
         if (!songsDocs.value.find((doc) => doc.filename == filename))
           await addDoc(songCollection, { filename: filename, name: filename })
@@ -94,7 +97,11 @@ async function createSetlist() {
 
     const updatedSetlist = {
       ...withoutFields(setlist.value, 'id', 'songs'),
-      songs: currentSongs.value.map((filename) => songsDocs.value.find((doc) => doc.filename == filename)!.id!),
+      songs: currentSongs.value.map((filenameOrCustom) =>
+        typeof filenameOrCustom === 'string'
+          ? songsDocs.value.find((doc) => doc.filename == filenameOrCustom)!.id!
+          : filenameOrCustom
+      ),
       updatedAt: new Date().toISOString(),
     }
 

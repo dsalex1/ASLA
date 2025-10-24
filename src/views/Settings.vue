@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
+import SongCreate from '@/components/SongCreate.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
@@ -82,6 +83,9 @@ async function deleteDrumsFile(song: Song) {
 
     <h3 class="mt-3"></h3>
     <v-card title="Song Details" flat>
+      <template v-slot:append>
+        <SongCreate />
+      </template>
       <template #text>
         <div class="mb-2 d-flex flex-wrap align-center gap-2">
           <v-chip
