@@ -20,22 +20,24 @@ function formatDuration(duration?: number) {
 
 <template>
   <v-list-item color="primary">
-    <div class="d-flex align-center" v-if="'name' in song">
+    <div class="d-flex align-center" v-if="song && 'name' in song">
       <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
       <div class="d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
         <div class="text-grey me-2" v-html="getSongInformation(song)" />
       </div>
     </div>
-    <div class="d-flex align-center" v-if="'title' in song">
-      <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
-      <div class="d-inline-flex flex-wrap">
-        <div class="me-1">{{ song?.title }}</div>
-        <div class="text-grey me-2">{{ song?.description }}</div>
+    <slot>
+      <div class="d-flex align-center" v-if="song && 'title' in song">
+        <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
+        <div class="d-inline-flex flex-wrap">
+          <div class="me-1">{{ song?.title }}</div>
+          <div class="text-grey me-2">{{ song?.description }}</div>
+        </div>
       </div>
-    </div>
-    <template v-slot:append v-if="'name' in song">
-      <span v-if="song.duration" class="bg-grey text-white rounded px-1">
+    </slot>
+    <template v-slot:append>
+      <span v-if="song && 'name' in song && song.duration" class="bg-grey text-white rounded px-1">
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(song.duration) }}
       </span>

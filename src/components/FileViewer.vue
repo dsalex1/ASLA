@@ -270,7 +270,7 @@ function formatDuration(duration?: number) {
         </div>
       </div>
       <div
-        v-if="props.mode != 'lyrics' && 'name' in currentSong"
+        v-if="props.mode != 'lyrics'"
         v-for="(file, i) in fileContents"
         :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
         style="width: 0px"
@@ -284,7 +284,7 @@ function formatDuration(duration?: number) {
           :source="file.dataUrl"
         />
         <div
-          v-if="!file.dataUrl"
+          v-if="!file.dataUrl && 'name' in currentSong"
           class="text-center"
           style="min-width: 100px; width: 50dvw; transform: translateX(-50%)"
         >
