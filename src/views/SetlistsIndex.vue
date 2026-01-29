@@ -19,17 +19,20 @@ function formatDuration(duration?: number) {
 
 <template>
   <AppLayout>
-    <h2 class="d-flex justify-space-between">
-      <div>Setlists</div>
-      <div class="d-flex flex-wrap justify-end ga-2">
-        <RouterLink to="/settings">
-          <v-btn color="secondary" class="ms-2" prepend-icon="fas fa-cog">settings</v-btn>
+    <div class="d-flex align-center justify-end flex-wrap ga-2 mb-2">
+      <h2 class="mb-0" style="flex-grow: 1">Setlists</h2>
+      <div class="order-2 order-sm-1">
+        <RouterLink to="/song" class="me-2">
+          <v-btn color="info" prepend-icon="fas fa-music">songs</v-btn>
         </RouterLink>
-        <RouterLink to="/setlist/create">
-          <v-btn color="primary" class="ms-2" prepend-icon="fas fa-plus">create</v-btn>
+        <RouterLink to="/settings">
+          <v-btn color="secondary" prepend-icon="fas fa-cog">settings</v-btn>
         </RouterLink>
       </div>
-    </h2>
+      <RouterLink to="/setlist/create" style="margin-left: auto" class="order-1 order-sm-2">
+        <v-btn color="primary" prepend-icon="fas fa-plus">create</v-btn>
+      </RouterLink>
+    </div>
     <v-row class="mt-2">
       <v-col
         v-for="setlist in [...setlists].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))"

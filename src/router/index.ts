@@ -35,6 +35,14 @@ const router = createRouter({
       component: () => import('@/views/Settings.vue'),
     },
     {
+      path: '/song',
+      component: () => import('@/views/SongIndex.vue'),
+    },
+    {
+      path: '/song/:id',
+      component: () => import('@/views/SongView.vue'),
+    },
+    {
       path: '/',
       redirect: LOGIN_ROUTE,
     },
