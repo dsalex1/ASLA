@@ -7,7 +7,7 @@ import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadByt
 import { ref } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
 
-const props = defineProps<{
+defineProps<{
   song: Song
 }>()
 
