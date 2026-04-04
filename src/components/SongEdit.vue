@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { lyricsHasChords } from '@/helpers/lyrics'
 import { songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
@@ -252,6 +253,7 @@ async function deleteSheetFile(song: Song) {
 
       <v-textarea
         v-model="song.lyrics"
+        :style="{ fontFamily: lyricsHasChords(song.lyrics) ? 'monospace' : 'inherit' }"
         @input="saveSong(song)"
         rows="5"
         auto-grow

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
 import SongCreate from '@/components/SongCreate.vue'
+import { lyricsHasChords } from '@/helpers/lyrics'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
@@ -380,6 +381,7 @@ async function migratePdfsToWebp() {
               <v-card-text>
                 <v-textarea
                   v-model="item.lyrics"
+                  :style="{ fontFamily: lyricsHasChords(item.lyrics) ? 'roboto-mono, monospace' : 'inherit' }"
                   @input="saveSong(item)"
                   rows="15"
                   auto-grow

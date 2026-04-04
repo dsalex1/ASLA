@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LyricsViewer from '@/components/LyricsViewer.vue'
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { CustomSetlistEntry, Song } from '@/types'
@@ -110,7 +111,12 @@ watchEffect(() => {
   })
 })
 
-const showLyrics = ref(props.mode == 'lyrics' ? true : false)
+const shallShowLyrics = ref(props.mode == 'lyrics' ? true : false)
+const showLyrics = computed(
+  () =>
+    shallShowLyrics.value ||
+    !(fileContents.value[currentFileIndex.value]?.dataUrl || fileContents.value[currentFileIndex.value]?.urls.length)
+)
 const fontSize = ref(16)
 
 // Autoscroll for lyrics
@@ -216,9 +222,9 @@ function formatDuration(duration?: number) {
         variant="tonal"
         density="compact"
         prepend-icon="fas fa-file-lines"
-        @click="showLyrics = !showLyrics"
+        @click="shallShowLyrics = !shallShowLyrics"
       >
-        {{ showLyrics ? 'Sheets' : 'Lyrics' }}
+        {{ shallShowLyrics ? 'Sheets' : 'Lyrics' }}
       </v-btn>
       <template v-if="showLyrics">
         <v-btn
@@ -267,7 +273,11 @@ function formatDuration(duration?: number) {
         :style="{ zIndex: 20, height: '100%', overflowY: 'scroll' }"
         ref="lyricsContainer"
       >
-        <div class="bg-white px-5 mb-2 w-100" v-if="currentSong?.nadine_moderation">
+        <div v-if="shallShowLyrics != showLyrics" class="text-center">
+          No sheet file - {{ currentSong.name }} - ({{ props.mode }})
+        </div>
+
+        <div class="bg-white px-5 mb-2 w-100" v-if="currentSong?.nadine_moderation && shallShowLyrics">
           <h2 class="mb-2">Moderation</h2>
           <div style="white-space: pre-wrap" :style="{ fontSize: fontSize + 'px' }">
             {{ currentSong?.nadine_moderation }}
@@ -276,9 +286,12 @@ function formatDuration(duration?: number) {
 
         <div class="bg-white px-5 pb-5">
           <h2 class="mb-2">{{ currentSong?.name || 'Untitled' }}</h2>
-          <div style="white-space: pre-wrap" v-if="currentSong?.lyrics" :style="{ fontSize: fontSize + 'px' }">
-            {{ currentSong?.lyrics }}
-          </div>
+          <LyricsViewer
+            v-if="currentSong?.lyrics"
+            :lyrics="currentSong.lyrics"
+            :mode="shallShowLyrics ? 'lyrics' : props.mode"
+            :fontSize="fontSize"
+          />
           <div v-else class="text-grey">No lyrics yet</div>
         </div>
       </div>
@@ -315,13 +328,6 @@ function formatDuration(duration?: number) {
             :style="{ height: pdfHeight + 'px', objectFit: 'contain' }"
           />
         </template>
-        <div
-          v-if="!(file.dataUrl || file.urls.length) && 'name' in currentSong"
-          class="text-center"
-          style="min-width: 100px; width: 50dvw; transform: translateX(-50%)"
-        >
-          No file - {{ file.name }} - ({{ props.mode }})
-        </div>
       </div>
     </div>
   </div>

@@ -11,6 +11,7 @@ import { computed, ref } from 'vue'
 import { useCollection } from 'vuefire'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { lyricsHasChords } from '@/helpers/lyrics'
 
 const router = useRouter()
 const { smAndDown } = useDisplay()
@@ -152,9 +153,14 @@ function editSong(song: Song) {
 
       <template #item.content="{ item }">
         <div class="d-flex gap-1">
-          <v-tooltip text="Sheet available" v-if="item.filename || item.pdfStorageRef">
+          <v-tooltip text="Sheet available" v-if="item.pdfStorageRef">
             <template #activator="{ props }">
               <span v-bind="props">🎼</span>
+            </template>
+          </v-tooltip>
+          <v-tooltip text="Chords available" v-else-if="item.lyrics && lyricsHasChords(item.lyrics)">
+            <template #activator="{ props }">
+              <span v-bind="props">🎹</span>
             </template>
           </v-tooltip>
           <v-tooltip text="Lyrics available" v-if="item.lyrics">
