@@ -21,7 +21,9 @@ export type Song = {
   filename: string
   pdfStorageSHA?: string
   pdfStorageRef?: string
+  pdfImageStorageRefs?: string[]
   drumsPdfStorageRef?: string
+  drumsPdfImageStorageRefs?: string[]
   name?: string
   ibi_instrument?: 'Bass' | 'A.Git' | 'E.Git'
   nadine_moderation?: string

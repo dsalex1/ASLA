@@ -42,6 +42,21 @@ async function saveDrumsFile(song: Song, file: File) {
     },
   })
   song.drumsPdfStorageRef = fileRef.fullPath
+
+  try {
+    const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
+    const blobs = await generateWebPImagesFromPdf(file)
+    const imageRefs: string[] = []
+    for (let i = 0; i < blobs.length; i++) {
+      const imgRef = firebaseRef(storage, `drums_images/${song.id || file.name}_page_${i + 1}.webp`)
+      await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+      imageRefs.push(imgRef.fullPath)
+    }
+    song.drumsPdfImageStorageRefs = imageRefs
+  } catch (error) {
+    console.error('Failed to generate drums WebP images:', error)
+  }
+
   await saveSong(song)
   setCurrentDrumsFile(song)
 }
@@ -52,6 +67,18 @@ async function deleteDrumsFile(song: Song) {
   const fileRef = firebaseRef(storage, song.drumsPdfStorageRef)
   deleteObject(fileRef)
   song.drumsPdfStorageRef = ''
+
+  if (song.drumsPdfImageStorageRefs) {
+    for (const imgRef of song.drumsPdfImageStorageRefs) {
+      try {
+        await deleteObject(firebaseRef(storage, imgRef))
+      } catch (e) {
+        // ignore
+      }
+    }
+    song.drumsPdfImageStorageRefs = []
+  }
+
   currentDrumsFile.value.dataURL = null
   await saveSong(song)
 }
@@ -71,7 +98,7 @@ async function setCurrentSheetFile(song: Song) {
 async function saveSheetFile(song: Song, file: File) {
   if (!file) return
   const storage = getStorage()
-  const fileRef = firebaseRef(storage, `sheets/${file.name}`)
+  const fileRef = firebaseRef(storage, `${file.name}`)
   if (song.pdfStorageRef) {
     await deleteSheetFile(song)
   }
@@ -81,6 +108,21 @@ async function saveSheetFile(song: Song, file: File) {
     },
   })
   song.pdfStorageRef = fileRef.fullPath
+
+  try {
+    const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
+    const blobs = await generateWebPImagesFromPdf(file)
+    const imageRefs: string[] = []
+    for (let i = 0; i < blobs.length; i++) {
+      const imgRef = firebaseRef(storage, `sheet_images/${song.id || file.name}_page_${i + 1}.webp`)
+      await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+      imageRefs.push(imgRef.fullPath)
+    }
+    song.pdfImageStorageRefs = imageRefs
+  } catch (error) {
+    console.error('Failed to generate sheet WebP images:', error)
+  }
+
   await saveSong(song)
   setCurrentSheetFile(song)
 }
@@ -95,6 +137,18 @@ async function deleteSheetFile(song: Song) {
     console.warn('Failed to delete old file, might not exist: ', e)
   }
   song.pdfStorageRef = ''
+
+  if (song.pdfImageStorageRefs) {
+    for (const imgRef of song.pdfImageStorageRefs) {
+      try {
+        await deleteObject(firebaseRef(storage, imgRef))
+      } catch (e) {
+        // ignore
+      }
+    }
+    song.pdfImageStorageRefs = []
+  }
+
   currentSheetFile.value.dataURL = null
   await saveSong(song)
 }
@@ -186,22 +240,22 @@ async function deleteSheetFile(song: Song) {
       />
 
       <v-textarea
-        v-model="song.lyrics"
+        v-model="song.nadine_moderation"
         @input="saveSong(song)"
         rows="5"
         auto-grow
-        label="Lyrics"
+        label="Moderation"
         variant="outlined"
         density="comfortable"
         class="mb-3"
       />
 
       <v-textarea
-        v-model="song.nadine_moderation"
+        v-model="song.lyrics"
         @input="saveSong(song)"
         rows="5"
         auto-grow
-        label="Moderation"
+        label="Lyrics"
         variant="outlined"
         density="comfortable"
         class="mb-3"

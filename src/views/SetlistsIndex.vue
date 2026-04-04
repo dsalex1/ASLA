@@ -40,17 +40,23 @@ function formatDuration(duration?: number) {
         cols="12"
         sm="6"
       >
-        <v-card height="100%" @click.stop="$router.push(`/setlist/${setlist.id}/overview`)" class="cursor-pointer">
+        <v-card height="100%">
           <div class="d-flex justify-space-between align-center flex-wrap">
-            <v-card-title style="width: 0; flex: 1">{{ setlist.name || 'Untitled' }}</v-card-title>
+            <v-card-title
+              style="width: 0; flex: 1"
+              @click="$router.push(`/setlist/${setlist.id}/overview`)"
+              class="cursor-pointer"
+            >
+              {{ setlist.name || 'Untitled' }}
+            </v-card-title>
             <div>
-              <RouterLink :to="`/setlist/${setlist.id}/edit`" @click.stop>
+              <RouterLink :to="`/setlist/${setlist.id}/edit`">
                 <v-btn color="primary" variant="text" class="ms-2" prepend-icon="fas fa-edit">edit</v-btn>
               </RouterLink>
             </div>
           </div>
           <VCardSubtitle>
-            <v-row>
+            <v-row @click="$router.push(`/setlist/${setlist.id}/overview`)" class="cursor-pointer">
               <v-col cols="6">
                 <v-icon class="me-2">fas fa-music</v-icon>
                 {{ setlist.songs.length }} song{{ setlist.songs.length > 1 ? 's' : '' }}
@@ -78,7 +84,7 @@ function formatDuration(duration?: number) {
                 variant="flat"
                 style="flex: 1; flex-basis: 0px"
                 prepend-icon="fa fa-microphone"
-                @click.stop="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'lyrics' } })"
+                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'lyrics' } })"
               >
                 Lyrics
               </v-btn>
@@ -87,7 +93,7 @@ function formatDuration(duration?: number) {
                 variant="flat"
                 style="flex: 1; flex-basis: 0px"
                 prepend-icon="fas fa-file-lines"
-                @click.stop="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'chords' } })"
+                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'chords' } })"
               >
                 Chords
               </v-btn>
@@ -96,7 +102,7 @@ function formatDuration(duration?: number) {
                 variant="flat"
                 style="flex: 1; flex-basis: 0px"
                 prepend-icon="fas fa-drum"
-                @click.stop="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'drums' } })"
+                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'drums' } })"
               >
                 Drums
               </v-btn>

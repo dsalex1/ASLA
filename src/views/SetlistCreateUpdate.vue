@@ -85,11 +85,29 @@ async function createSetlist() {
         //upload file to firebase storage and save reference in the song doc
         if (fileHandle && (!songDoc.pdfStorageRef || songDoc.pdfStorageSHA != fileSha)) {
           console.log('Uploading file', filename)
-          const file = await uploadFile(fileHandle)
+          const fileToUpload = await fileHandle.getFile()
+          const file = await uploadFile(fileHandle, fileToUpload)
+
+          // Generate WebP Images
+          const imageRefs: string[] = []
+          try {
+            const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
+            const blobs = await generateWebPImagesFromPdf(fileToUpload)
+            const storage = getStorage()
+            for (let i = 0; i < blobs.length; i++) {
+              const imgRef = firebaseRef(storage, `sheet_images/${songDoc.id || fileToUpload.name}_page_${i + 1}.webp`)
+              await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+              imageRefs.push(imgRef.fullPath)
+            }
+          } catch (err) {
+            console.error('Failed to generate WebP for local file:', err)
+          }
+
           await updateDoc(doc(songCollection, songDoc.id!), {
             filename: filename,
             pdfStorageRef: file.fullPath,
             pdfStorageSHA: fileSha,
+            pdfImageStorageRefs: imageRefs,
           })
         }
       })
@@ -135,12 +153,13 @@ async function deleteSetlist() {
 
 const { pdfTree } = useSheetBaseDirectory()
 
-async function uploadFile(file: FileSystemFileHandle) {
+async function uploadFile(fileHandle: FileSystemFileHandle, fileData?: File) {
   const storage = getStorage()
-  const fileRef = firebaseRef(storage, file.name) // folder + '/' +
-  await uploadBytes(fileRef, await file.getFile(), {
+  const fileRef = firebaseRef(storage, fileHandle.name) // folder + '/' +
+  const actualFile = fileData || (await fileHandle.getFile())
+  await uploadBytes(fileRef, actualFile, {
     customMetadata: {
-      originalFileName: file.name,
+      originalFileName: actualFile.name,
     },
   })
   return fileRef

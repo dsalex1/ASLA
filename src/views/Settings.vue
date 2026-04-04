@@ -7,7 +7,7 @@ import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
-import { doc, updateDoc } from 'firebase/firestore'
+import { doc, getDocs, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
@@ -68,6 +68,91 @@ async function deleteDrumsFile(song: Song) {
   currentDrumsFile.value.dataURL = null
   await saveSong(song)
 }
+
+const isMigrating = ref(false)
+const migrationProgress = ref({ done: 0, total: 0 })
+
+async function migratePdfsToWebp() {
+  if (
+    !confirm(
+      'This will download all PDFs and convert them to WebP images, saving them back to storage (can take a while). Proceed?'
+    )
+  )
+    return
+
+  isMigrating.value = true
+  const storage = getStorage()
+
+  try {
+    const allSongs = await getDocs(songCollection)
+    const songsToMigrate = allSongs.docs.filter((d) => {
+      const data = d.data()
+      return (
+        (data.pdfStorageRef && (!data.pdfImageStorageRefs || data.pdfImageStorageRefs.length === 0)) ||
+        (data.drumsPdfStorageRef && (!data.drumsPdfImageStorageRefs || data.drumsPdfImageStorageRefs.length === 0))
+      )
+    })
+
+    migrationProgress.value.total = songsToMigrate.length
+    migrationProgress.value.done = 0
+
+    const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
+
+    for (const docSnap of songsToMigrate) {
+      const song = docSnap.data()
+      let updated = false
+
+      if (song.pdfStorageRef && (!song.pdfImageStorageRefs || song.pdfImageStorageRefs.length === 0)) {
+        try {
+          const url = await getDownloadURL(firebaseRef(storage, song.pdfStorageRef))
+          const res = await fetch(url)
+          const blob = await res.blob()
+          const blobs = await generateWebPImagesFromPdf(blob)
+          const imageRefs: string[] = []
+          for (let i = 0; i < blobs.length; i++) {
+            const imgRef = firebaseRef(storage, `sheet_images/${docSnap.id}_page_${i + 1}.webp`)
+            await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+            imageRefs.push(imgRef.fullPath)
+          }
+          song.pdfImageStorageRefs = imageRefs
+          updated = true
+        } catch (e) {
+          console.error('Failed sheet migration for', docSnap.id, e)
+        }
+      }
+
+      if (song.drumsPdfStorageRef && (!song.drumsPdfImageStorageRefs || song.drumsPdfImageStorageRefs.length === 0)) {
+        try {
+          const url = await getDownloadURL(firebaseRef(storage, song.drumsPdfStorageRef))
+          const res = await fetch(url)
+          const blob = await res.blob()
+          const blobs = await generateWebPImagesFromPdf(blob)
+          const imageRefs: string[] = []
+          for (let i = 0; i < blobs.length; i++) {
+            const imgRef = firebaseRef(storage, `drums_images/${docSnap.id}_page_${i + 1}.webp`)
+            await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+            imageRefs.push(imgRef.fullPath)
+          }
+          song.drumsPdfImageStorageRefs = imageRefs
+          updated = true
+        } catch (e) {
+          console.error('Failed drums migration for', docSnap.id, e)
+        }
+      }
+
+      if (updated) {
+        await updateDoc(doc(songCollection, docSnap.id), song)
+      }
+      migrationProgress.value.done++
+    }
+    alert('Migration complete! All missing WebP caches have been generated.')
+  } catch (error) {
+    console.error('Migration failed:', error)
+    alert('Migration failed. Check console for details.')
+  } finally {
+    isMigrating.value = false
+  }
+}
 </script>
 
 <template>
@@ -80,6 +165,23 @@ async function deleteDrumsFile(song: Song) {
       <div class="mr-2">current sheet path: {{ baseDirectory ? '/' + baseDirectory.name : 'none' }}</div>
       <v-btn @click="chooseNewSheetBaseDirectory" color="primary">Select new path</v-btn>
     </div>
+
+    <v-card class="mt-4 mb-4" variant="outlined">
+      <v-card-text>
+        <div class="d-flex justify-space-between align-center">
+          <div>
+            <h3 class="mb-1">WebP Image Cache Migration</h3>
+            <div class="text-caption text-grey">
+              Generate missing high-res images for fast loading of old PDF files.
+            </div>
+          </div>
+          <v-btn :loading="isMigrating" @click="migratePdfsToWebp" color="warning" prepend-icon="fas fa-file-image">
+            Force Migration
+            <span v-if="isMigrating" class="ml-2">({{ migrationProgress.done }}/{{ migrationProgress.total }})</span>
+          </v-btn>
+        </div>
+      </v-card-text>
+    </v-card>
 
     <h3 class="mt-3"></h3>
     <v-card title="Song Details" flat>
@@ -240,7 +342,7 @@ async function deleteDrumsFile(song: Song) {
                   label="Select new drums file"
                   hide-details
                   accept=".pdf"
-                  @input="(evt:InputEvent) => saveDrumsFile(item, (evt.target as HTMLInputElement).files?.[0]!)"
+                  @input="(evt: InputEvent) => saveDrumsFile(item, (evt.target as HTMLInputElement).files?.[0]!)"
                 />
 
                 <template v-if="item.drumsPdfStorageRef">
