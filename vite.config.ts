@@ -17,6 +17,7 @@ export default ({ mode }: { mode: string }) => {
         registerType: 'autoUpdate',
         workbox: {
           globPatterns: ['**/*'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 ** 2
         },
         includeAssets: ['**/*'],
         manifest: {
@@ -50,6 +51,7 @@ export default ({ mode }: { mode: string }) => {
       outDir: 'docs',
       rollupOptions: {
         output: {
+          inlineDynamicImports: true,
           sanitizeFileName: (name) => {
             // Sanitizes file names generated during the build process:
             // - Replaces spaces with dashes ('-').
