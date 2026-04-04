@@ -115,7 +115,8 @@ const shallShowLyrics = ref(props.mode == 'lyrics' ? true : false)
 const showLyrics = computed(
   () =>
     shallShowLyrics.value ||
-    !(fileContents.value[currentFileIndex.value]?.dataUrl || fileContents.value[currentFileIndex.value]?.urls.length)
+    (fileContents.value.length > 0 &&
+      !(fileContents.value[currentFileIndex.value]?.dataUrl || fileContents.value[currentFileIndex.value]?.urls.length))
 )
 const fontSize = ref(16)
 
