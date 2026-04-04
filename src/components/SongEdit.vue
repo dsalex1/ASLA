@@ -55,6 +55,49 @@ async function deleteDrumsFile(song: Song) {
   currentDrumsFile.value.dataURL = null
   await saveSong(song)
 }
+
+const currentSheetFile = ref({
+  dataURL: null as string | null,
+  loading: false,
+  pageCount: 1,
+})
+
+async function setCurrentSheetFile(song: Song) {
+  if (!song.pdfStorageRef) return
+  currentSheetFile.value.loading = true
+  currentSheetFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
+}
+
+async function saveSheetFile(song: Song, file: File) {
+  if (!file) return
+  const storage = getStorage()
+  const fileRef = firebaseRef(storage, `sheets/${file.name}`)
+  if (song.pdfStorageRef) {
+    await deleteSheetFile(song)
+  }
+  await uploadBytes(fileRef, file, {
+    customMetadata: {
+      originalFileName: file.name,
+    },
+  })
+  song.pdfStorageRef = fileRef.fullPath
+  await saveSong(song)
+  setCurrentSheetFile(song)
+}
+
+async function deleteSheetFile(song: Song) {
+  if (!song.pdfStorageRef) return
+  const storage = getStorage()
+  const fileRef = firebaseRef(storage, song.pdfStorageRef)
+  try {
+    await deleteObject(fileRef)
+  } catch (e) {
+    console.warn('Failed to delete old file, might not exist: ', e)
+  }
+  song.pdfStorageRef = ''
+  currentSheetFile.value.dataURL = null
+  await saveSong(song)
+}
 </script>
 
 <template>
@@ -192,6 +235,36 @@ async function deleteDrumsFile(song: Song) {
           />
         </div>
         <v-btn color="error" @click="deleteDrumsFile(song)" block>Remove Drums PDF</v-btn>
+      </template>
+
+      <v-divider class="mb-3" />
+
+      <h4 class="mb-2">Sheet PDF</h4>
+      <v-file-input
+        type="file"
+        variant="outlined"
+        density="comfortable"
+        label="Select sheet file"
+        accept=".pdf"
+        @input="(evt: InputEvent) => saveSheetFile(song, (evt.target as HTMLInputElement).files?.[0]!)"
+        class="mb-3"
+      />
+
+      <template v-if="song.pdfStorageRef">
+        <div class="d-flex flex-wrap justify-center ga-2 mb-3">
+          <vue-pdf-embed
+            class="border"
+            v-for="page in currentSheetFile.pageCount"
+            :key="page"
+            @vue:before-mount="setCurrentSheetFile(song)"
+            @vue:before-unmount="currentSheetFile.dataURL = null"
+            @loaded="({ numPages }) => ((currentSheetFile.pageCount = numPages), (currentSheetFile.loading = false))"
+            :height="200"
+            :page="page"
+            :source="currentSheetFile.dataURL"
+          />
+        </div>
+        <v-btn color="error" class="mb-3" @click="deleteSheetFile(song)" block>Remove Sheet PDF</v-btn>
       </template>
     </v-card-text>
   </v-card>

@@ -30,12 +30,16 @@ type FileEntry = { name: string; handle: FileSystemHandle; children?: FileEntry[
 
 async function getPdfFileTree(dirHandle: FileSystemDirectoryHandle) {
   const files = [] as FileEntry[]
-  for await (let [name, handle] of dirHandle) {
-    if (handle.kind === 'directory') {
-      files.push({ name, handle, children: await getPdfFileTree(handle) })
-    } else if (name.endsWith('.pdf')) {
-      files.push({ name, handle })
+  try {
+    for await (let [name, handle] of dirHandle) {
+      if (handle.kind === 'directory') {
+        files.push({ name, handle, children: await getPdfFileTree(handle) })
+      } else if (name.endsWith('.pdf')) {
+        files.push({ name, handle })
+      }
     }
+  } catch (e) {
+    console.warn('Error reading directory:', e)
   }
   return files
 }
