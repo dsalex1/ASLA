@@ -41,11 +41,15 @@ const currentDrumsFile = ref({
   pageCount: 1,
 })
 
-async function setCurrentDrumsFile(song: Song) {
-  currentDrumsFile.value.loading = true
+function resetCurrentDrumsFile() {
   currentDrumsFile.value.dataURL = null
   currentDrumsFile.value.urls = []
   currentDrumsFile.value.pageCount = 1
+}
+
+async function setCurrentDrumsFile(song: Song) {
+  currentDrumsFile.value.loading = true
+  resetCurrentDrumsFile()
 
   if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
     currentDrumsFile.value.urls = await Promise.all(
@@ -86,16 +90,14 @@ async function deleteDrumsFile(song: Song) {
   const fileRef = firebaseRef(storage, song.drumsPdfStorageRef)
   deleteObject(fileRef)
   song.drumsPdfStorageRef = ''
-  currentDrumsFile.value.dataURL = null
-  currentDrumsFile.value.urls = []
-  currentDrumsFile.value.pageCount = 1
+  resetCurrentDrumsFile()
 
   if (song.drumsPdfImageStorageRefs) {
     for (const imgRef of song.drumsPdfImageStorageRefs) {
       try {
         await deleteObject(firebaseRef(storage, imgRef))
       } catch (e) {
-        // ignore
+        console.warn(`Failed to delete old drums image ${imgRef}:`, e)
       }
     }
     song.drumsPdfImageStorageRefs = []
@@ -385,9 +387,7 @@ async function migratePdfsToWebp() {
                   <div
                     class="d-flex flex-wrap justify-center ga-2"
                     @vue:before-mount="setCurrentDrumsFile(item)"
-                    @vue:before-unmount="
-                      ;((currentDrumsFile.dataURL = null), (currentDrumsFile.urls = []), (currentDrumsFile.pageCount = 1))
-                    "
+                    @vue:before-unmount="resetCurrentDrumsFile()"
                   >
                     <template v-if="currentDrumsFile.urls.length > 0">
                       <img

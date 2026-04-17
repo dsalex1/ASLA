@@ -28,11 +28,15 @@ const currentDrumsFile = ref({
   pageCount: 1,
 })
 
-async function setCurrentDrumsFile(song: Song) {
-  currentDrumsFile.value.loading = true
+function resetCurrentDrumsFile() {
   currentDrumsFile.value.dataURL = null
   currentDrumsFile.value.urls = []
   currentDrumsFile.value.pageCount = 1
+}
+
+async function setCurrentDrumsFile(song: Song) {
+  currentDrumsFile.value.loading = true
+  resetCurrentDrumsFile()
 
   if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
     currentDrumsFile.value.urls = await Promise.all(
@@ -99,9 +103,7 @@ async function deleteDrumsFile(song: Song) {
     song.drumsPdfImageStorageRefs = []
   }
 
-  currentDrumsFile.value.dataURL = null
-  currentDrumsFile.value.urls = []
-  currentDrumsFile.value.pageCount = 1
+  resetCurrentDrumsFile()
   await saveSong(song)
 }
 
@@ -112,11 +114,15 @@ const currentSheetFile = ref({
   pageCount: 1,
 })
 
-async function setCurrentSheetFile(song: Song) {
-  currentSheetFile.value.loading = true
+function resetCurrentSheetFile() {
   currentSheetFile.value.dataURL = null
   currentSheetFile.value.urls = []
   currentSheetFile.value.pageCount = 1
+}
+
+async function setCurrentSheetFile(song: Song) {
+  currentSheetFile.value.loading = true
+  resetCurrentSheetFile()
 
   if (song.pdfImageStorageRefs && song.pdfImageStorageRefs.length > 0) {
     currentSheetFile.value.urls = await Promise.all(
@@ -189,9 +195,7 @@ async function deleteSheetFile(song: Song) {
     song.pdfImageStorageRefs = []
   }
 
-  currentSheetFile.value.dataURL = null
-  currentSheetFile.value.urls = []
-  currentSheetFile.value.pageCount = 1
+  resetCurrentSheetFile()
   await saveSong(song)
 }
 </script>
@@ -321,9 +325,7 @@ async function deleteSheetFile(song: Song) {
         <div
           class="d-flex flex-wrap justify-center ga-2 mb-3"
           @vue:before-mount="setCurrentDrumsFile(song)"
-          @vue:before-unmount="
-            ;((currentDrumsFile.dataURL = null), (currentDrumsFile.urls = []), (currentDrumsFile.pageCount = 1))
-          "
+          @vue:before-unmount="resetCurrentDrumsFile()"
         >
           <template v-if="currentDrumsFile.urls.length > 0">
             <img
@@ -367,9 +369,7 @@ async function deleteSheetFile(song: Song) {
         <div
           class="d-flex flex-wrap justify-center ga-2 mb-3"
           @vue:before-mount="setCurrentSheetFile(song)"
-          @vue:before-unmount="
-            ;((currentSheetFile.dataURL = null), (currentSheetFile.urls = []), (currentSheetFile.pageCount = 1))
-          "
+          @vue:before-unmount="resetCurrentSheetFile()"
         >
           <template v-if="currentSheetFile.urls.length > 0">
             <img
