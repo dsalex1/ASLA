@@ -36,12 +36,31 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
 
 const currentDrumsFile = ref({
   dataURL: null as string | null,
+  urls: [] as string[],
   loading: false,
   pageCount: 1,
 })
 
 async function setCurrentDrumsFile(song: Song) {
   currentDrumsFile.value.loading = true
+  currentDrumsFile.value.dataURL = null
+  currentDrumsFile.value.urls = []
+  currentDrumsFile.value.pageCount = 1
+
+  if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
+    currentDrumsFile.value.urls = await Promise.all(
+      song.drumsPdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+    currentDrumsFile.value.pageCount = currentDrumsFile.value.urls.length || 1
+    currentDrumsFile.value.loading = false
+    return
+  }
+
+  if (!song.drumsPdfStorageRef) {
+    currentDrumsFile.value.loading = false
+    return
+  }
+
   currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
 }
 
@@ -56,6 +75,7 @@ async function saveDrumsFile(song: Song, file: File) {
     },
   })
   song.drumsPdfStorageRef = fileRef.fullPath
+  song.drumsPdfImageStorageRefs = []
   await saveSong(song)
   setCurrentDrumsFile(song)
 }
@@ -67,6 +87,20 @@ async function deleteDrumsFile(song: Song) {
   deleteObject(fileRef)
   song.drumsPdfStorageRef = ''
   currentDrumsFile.value.dataURL = null
+  currentDrumsFile.value.urls = []
+  currentDrumsFile.value.pageCount = 1
+
+  if (song.drumsPdfImageStorageRefs) {
+    for (const imgRef of song.drumsPdfImageStorageRefs) {
+      try {
+        await deleteObject(firebaseRef(storage, imgRef))
+      } catch (e) {
+        // ignore
+      }
+    }
+    song.drumsPdfImageStorageRefs = []
+  }
+
   await saveSong(song)
 }
 
@@ -348,19 +382,36 @@ async function migratePdfsToWebp() {
 
                 <template v-if="item.drumsPdfStorageRef">
                   <h4 class="mt-4">Current Drums PDF:</h4>
-                  <div class="d-flex flex-wrap justify-center ga-2">
-                    <vue-pdf-embed
-                      class="border"
-                      v-for="page in currentDrumsFile.pageCount"
-                      @vue:before-mount="setCurrentDrumsFile(item)"
-                      @vue:before-unmount="currentDrumsFile.dataURL = null"
-                      @loaded="
-                        ({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))
-                      "
-                      :height="200"
-                      :page="page"
-                      :source="currentDrumsFile.dataURL"
-                    />
+                  <div
+                    class="d-flex flex-wrap justify-center ga-2"
+                    @vue:before-mount="setCurrentDrumsFile(item)"
+                    @vue:before-unmount="
+                      ;((currentDrumsFile.dataURL = null), (currentDrumsFile.urls = []), (currentDrumsFile.pageCount = 1))
+                    "
+                  >
+                    <template v-if="currentDrumsFile.urls.length > 0">
+                      <img
+                        class="border"
+                        v-for="(url, index) in currentDrumsFile.urls"
+                        :key="url"
+                        :src="url"
+                        :alt="`Drums page ${index + 1}`"
+                        style="height: 200px; object-fit: contain"
+                      />
+                    </template>
+                    <template v-else-if="currentDrumsFile.dataURL">
+                      <vue-pdf-embed
+                        class="border"
+                        v-for="page in currentDrumsFile.pageCount"
+                        :key="page"
+                        @loaded="
+                          ({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))
+                        "
+                        :height="200"
+                        :page="page"
+                        :source="currentDrumsFile.dataURL"
+                      />
+                    </template>
                   </div>
                   <v-btn color="error" @click="deleteDrumsFile(item)" class="mt-2">Remove Drums PDF</v-btn>
                 </template>

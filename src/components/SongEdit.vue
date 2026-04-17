@@ -23,12 +23,31 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
 
 const currentDrumsFile = ref({
   dataURL: null as string | null,
+  urls: [] as string[],
   loading: false,
   pageCount: 1,
 })
 
 async function setCurrentDrumsFile(song: Song) {
   currentDrumsFile.value.loading = true
+  currentDrumsFile.value.dataURL = null
+  currentDrumsFile.value.urls = []
+  currentDrumsFile.value.pageCount = 1
+
+  if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
+    currentDrumsFile.value.urls = await Promise.all(
+      song.drumsPdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+    currentDrumsFile.value.pageCount = currentDrumsFile.value.urls.length || 1
+    currentDrumsFile.value.loading = false
+    return
+  }
+
+  if (!song.drumsPdfStorageRef) {
+    currentDrumsFile.value.loading = false
+    return
+  }
+
   currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
 }
 
@@ -81,18 +100,38 @@ async function deleteDrumsFile(song: Song) {
   }
 
   currentDrumsFile.value.dataURL = null
+  currentDrumsFile.value.urls = []
+  currentDrumsFile.value.pageCount = 1
   await saveSong(song)
 }
 
 const currentSheetFile = ref({
   dataURL: null as string | null,
+  urls: [] as string[],
   loading: false,
   pageCount: 1,
 })
 
 async function setCurrentSheetFile(song: Song) {
-  if (!song.pdfStorageRef) return
   currentSheetFile.value.loading = true
+  currentSheetFile.value.dataURL = null
+  currentSheetFile.value.urls = []
+  currentSheetFile.value.pageCount = 1
+
+  if (song.pdfImageStorageRefs && song.pdfImageStorageRefs.length > 0) {
+    currentSheetFile.value.urls = await Promise.all(
+      song.pdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+    currentSheetFile.value.pageCount = currentSheetFile.value.urls.length || 1
+    currentSheetFile.value.loading = false
+    return
+  }
+
+  if (!song.pdfStorageRef) {
+    currentSheetFile.value.loading = false
+    return
+  }
+
   currentSheetFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
 }
 
@@ -151,6 +190,8 @@ async function deleteSheetFile(song: Song) {
   }
 
   currentSheetFile.value.dataURL = null
+  currentSheetFile.value.urls = []
+  currentSheetFile.value.pageCount = 1
   await saveSong(song)
 }
 </script>
@@ -277,18 +318,34 @@ async function deleteSheetFile(song: Song) {
       />
 
       <template v-if="song.drumsPdfStorageRef">
-        <div class="d-flex flex-wrap justify-center ga-2 mb-3">
-          <vue-pdf-embed
-            class="border"
-            v-for="page in currentDrumsFile.pageCount"
-            :key="page"
-            @vue:before-mount="setCurrentDrumsFile(song)"
-            @vue:before-unmount="currentDrumsFile.dataURL = null"
-            @loaded="({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))"
-            :height="200"
-            :page="page"
-            :source="currentDrumsFile.dataURL"
-          />
+        <div
+          class="d-flex flex-wrap justify-center ga-2 mb-3"
+          @vue:before-mount="setCurrentDrumsFile(song)"
+          @vue:before-unmount="
+            ;((currentDrumsFile.dataURL = null), (currentDrumsFile.urls = []), (currentDrumsFile.pageCount = 1))
+          "
+        >
+          <template v-if="currentDrumsFile.urls.length > 0">
+            <img
+              class="border"
+              v-for="(url, index) in currentDrumsFile.urls"
+              :key="url"
+              :src="url"
+              :alt="`Drums page ${index + 1}`"
+              style="height: 200px; object-fit: contain"
+            />
+          </template>
+          <template v-else-if="currentDrumsFile.dataURL">
+            <vue-pdf-embed
+              class="border"
+              v-for="page in currentDrumsFile.pageCount"
+              :key="page"
+              @loaded="({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))"
+              :height="200"
+              :page="page"
+              :source="currentDrumsFile.dataURL"
+            />
+          </template>
         </div>
         <v-btn color="error" @click="deleteDrumsFile(song)" block>Remove Drums PDF</v-btn>
       </template>
@@ -307,18 +364,34 @@ async function deleteSheetFile(song: Song) {
       />
 
       <template v-if="song.pdfStorageRef">
-        <div class="d-flex flex-wrap justify-center ga-2 mb-3">
-          <vue-pdf-embed
-            class="border"
-            v-for="page in currentSheetFile.pageCount"
-            :key="page"
-            @vue:before-mount="setCurrentSheetFile(song)"
-            @vue:before-unmount="currentSheetFile.dataURL = null"
-            @loaded="({ numPages }) => ((currentSheetFile.pageCount = numPages), (currentSheetFile.loading = false))"
-            :height="200"
-            :page="page"
-            :source="currentSheetFile.dataURL"
-          />
+        <div
+          class="d-flex flex-wrap justify-center ga-2 mb-3"
+          @vue:before-mount="setCurrentSheetFile(song)"
+          @vue:before-unmount="
+            ;((currentSheetFile.dataURL = null), (currentSheetFile.urls = []), (currentSheetFile.pageCount = 1))
+          "
+        >
+          <template v-if="currentSheetFile.urls.length > 0">
+            <img
+              class="border"
+              v-for="(url, index) in currentSheetFile.urls"
+              :key="url"
+              :src="url"
+              :alt="`Sheet page ${index + 1}`"
+              style="height: 200px; object-fit: contain"
+            />
+          </template>
+          <template v-else-if="currentSheetFile.dataURL">
+            <vue-pdf-embed
+              class="border"
+              v-for="page in currentSheetFile.pageCount"
+              :key="page"
+              @loaded="({ numPages }) => ((currentSheetFile.pageCount = numPages), (currentSheetFile.loading = false))"
+              :height="200"
+              :page="page"
+              :source="currentSheetFile.dataURL"
+            />
+          </template>
         </div>
         <v-btn color="error" class="mb-3" @click="deleteSheetFile(song)" block>Remove Sheet PDF</v-btn>
       </template>
