@@ -34,17 +34,19 @@ const filteredSongs = computed(() => {
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
 
-const currentDrumsFile = ref({
-  dataURL: null as string | null,
-  urls: [] as string[],
-  loading: false,
-  pageCount: 1,
-})
+function createDrumsPreviewState() {
+  return {
+    dataURL: null as string | null,
+    urls: [] as string[],
+    loading: false,
+    pageCount: 1,
+  }
+}
+
+const currentDrumsFile = ref(createDrumsPreviewState())
 
 function resetCurrentDrumsFile() {
-  currentDrumsFile.value.dataURL = null
-  currentDrumsFile.value.urls = []
-  currentDrumsFile.value.pageCount = 1
+  currentDrumsFile.value = createDrumsPreviewState()
 }
 
 async function setCurrentDrumsFile(song: Song) {

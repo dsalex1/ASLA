@@ -21,17 +21,19 @@ const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, son
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
 
-const currentDrumsFile = ref({
-  dataURL: null as string | null,
-  urls: [] as string[],
-  loading: false,
-  pageCount: 1,
-})
+function createPdfPreviewState() {
+  return {
+    dataURL: null as string | null,
+    urls: [] as string[],
+    loading: false,
+    pageCount: 1,
+  }
+}
+
+const currentDrumsFile = ref(createPdfPreviewState())
 
 function resetCurrentDrumsFile() {
-  currentDrumsFile.value.dataURL = null
-  currentDrumsFile.value.urls = []
-  currentDrumsFile.value.pageCount = 1
+  currentDrumsFile.value = createPdfPreviewState()
 }
 
 async function setCurrentDrumsFile(song: Song) {
@@ -107,17 +109,10 @@ async function deleteDrumsFile(song: Song) {
   await saveSong(song)
 }
 
-const currentSheetFile = ref({
-  dataURL: null as string | null,
-  urls: [] as string[],
-  loading: false,
-  pageCount: 1,
-})
+const currentSheetFile = ref(createPdfPreviewState())
 
 function resetCurrentSheetFile() {
-  currentSheetFile.value.dataURL = null
-  currentSheetFile.value.urls = []
-  currentSheetFile.value.pageCount = 1
+  currentSheetFile.value = createPdfPreviewState()
 }
 
 async function setCurrentSheetFile(song: Song) {
