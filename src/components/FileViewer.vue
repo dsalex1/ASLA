@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import LyricsViewer from '@/components/LyricsViewer.vue'
-import { flatTree, getSongInformation, mapTree } from '@/helpers'
-import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
+import { getSongInformation } from '@/helpers'
 import { CustomSetlistEntry, Song } from '@/types'
 import { useSwipe, useWindowSize } from '@vueuse/core'
 import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, ref, watch, watchEffect } from 'vue'
-import VuePdfEmbed from 'vue-pdf-embed'
 import { VBtn } from 'vuetify/components'
 
 const props = defineProps<{
@@ -14,22 +12,13 @@ const props = defineProps<{
   mode?: 'lyrics' | 'chords' | 'drums'
 }>()
 
-const { pdfTree } = useSheetBaseDirectory()
-
-const flattendPdfTree = computed(() =>
-  flatTree(mapTree(pdfTree.value, (f) => ({ ...f, handle: f.handle as FileSystemFileHandle })))
-)
-
 async function resolveFileUrl(song: Song | CustomSetlistEntry) {
-  if (!('pdfStorageRef' in song)) return ''
-  if (props.mode == 'lyrics') return ''
+  if (!('pdfStorageRef' in song)) return []
+  if (props.mode == 'lyrics') return []
 
   if (props.mode == 'chords') {
     if (song.pdfImageStorageRefs && song.pdfImageStorageRefs.length > 0) {
       return await Promise.all(song.pdfImageStorageRefs.map((r) => getDownloadURL(firebaseRef(getStorage(), r))))
-    }
-    if (song.pdfStorageRef) {
-      return await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
     }
   }
 
@@ -37,19 +26,11 @@ async function resolveFileUrl(song: Song | CustomSetlistEntry) {
     if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
       return await Promise.all(song.drumsPdfImageStorageRefs.map((r) => getDownloadURL(firebaseRef(getStorage(), r))))
     }
-    if (song.drumsPdfStorageRef) {
-      return await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
-    }
   }
-
-  if (song.filename) {
-    const localFile = await flattendPdfTree.value.find((f) => f.name === song.filename)
-    if (localFile?.handle) return URL.createObjectURL(await localFile.handle.getFile())
-  }
-  return ''
+  return []
 }
 
-const fileContents = ref<{ urls: string[]; isPdf: boolean; dataUrl: string; name: string; pageCount?: number }[]>([])
+const fileContents = ref<{ urls: string[]; name: string; pageCount?: number }[]>([])
 
 watch(
   props,
@@ -57,14 +38,11 @@ watch(
     fileContents.value = await Promise.all(
       props.songs.map(async (song) => {
         const resolved = props.mode == 'lyrics' ? '' : await resolveFileUrl(song)
-        const isImageArray = Array.isArray(resolved)
         return {
-          pageCount: props.mode == 'lyrics' ? 1 : isImageArray ? resolved.length : 1,
+          pageCount: props.mode == 'lyrics' ? 1 : resolved.length || 1,
           ...(fileContents.value?.find((f) => f.name === ('name' in song ? song.name : '')) ?? {}), //if already loaded overwrite pageCount
           name: 'name' in song && song.name ? song.name : 'title' in song ? song.title : 'untitled',
-          dataUrl: isImageArray ? '' : (resolved as string),
-          urls: isImageArray ? (resolved as string[]) : [],
-          isPdf: !isImageArray,
+          urls: resolved as string[],
         }
       })
     )
@@ -115,8 +93,7 @@ const shallShowLyrics = ref(props.mode == 'lyrics' ? true : false)
 const showLyrics = computed(
   () =>
     shallShowLyrics.value ||
-    (fileContents.value.length > 0 &&
-      !(fileContents.value[currentFileIndex.value]?.dataUrl || fileContents.value[currentFileIndex.value]?.urls.length))
+    (fileContents.value.length > 0 && !fileContents.value[currentFileIndex.value]?.urls.length)
 )
 const fontSize = ref(16)
 
@@ -309,34 +286,15 @@ function formatDuration(duration?: number) {
         :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
         style="width: 0px"
       >
-        <template v-if="file.isPdf">
-          <vue-pdf-embed
-            v-for="pageIndex in file.pageCount || 1"
-            v-show="pageIndex === currentFilePage"
-            :height="pdfHeight"
-            :page="pageIndex"
-            @loaded="({ numPages }) => (file.pageCount = numPages)"
-            :source="file.dataUrl"
-          />
-        </template>
-        <template v-else>
-          <img
-            style="transform: translateX(-50%)"
-            v-for="(url, index) in file.urls"
-            :key="index"
-            v-show="index + 1 === currentFilePage"
-            :src="url"
-            :style="{ height: pdfHeight + 'px', objectFit: 'contain' }"
-          />
-        </template>
+        <img
+          style="transform: translateX(-50%)"
+          v-for="(url, index) in file.urls"
+          :key="index"
+          v-show="index + 1 === currentFilePage"
+          :src="url"
+          :style="{ height: pdfHeight + 'px', objectFit: 'contain' }"
+        />
       </div>
     </div>
   </div>
 </template>
-
-<style>
-.vue-pdf-embed__page {
-  display: flex;
-  justify-content: center;
-}
-</style>
