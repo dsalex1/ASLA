@@ -11,7 +11,6 @@ import { useDebounceFn } from '@vueuse/core'
 import { doc, getDocs, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref } from 'vue'
-import VuePdfEmbed from 'vue-pdf-embed'
 import { useCollection } from 'vuefire'
 
 const { baseDirectory, chooseNewSheetBaseDirectory } = useSheetBaseDirectory()
@@ -34,15 +33,26 @@ const filteredSongs = computed(() => {
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
 
-const currentDrumsFile = ref({
-  dataURL: null as string | null,
-  loading: false,
-  pageCount: 1,
-})
+function createDrumsPreviewState() {
+  return {
+    urls: [] as string[],
+  }
+}
+
+const currentDrumsFile = ref(createDrumsPreviewState())
+
+function resetCurrentDrumsFile() {
+  currentDrumsFile.value = createDrumsPreviewState()
+}
 
 async function setCurrentDrumsFile(song: Song) {
-  currentDrumsFile.value.loading = true
-  currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
+  resetCurrentDrumsFile()
+
+  if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
+    currentDrumsFile.value.urls = await Promise.all(
+      song.drumsPdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+  }
 }
 
 async function saveDrumsFile(song: Song, file: File) {
@@ -56,6 +66,7 @@ async function saveDrumsFile(song: Song, file: File) {
     },
   })
   song.drumsPdfStorageRef = fileRef.fullPath
+  song.drumsPdfImageStorageRefs = []
   await saveSong(song)
   setCurrentDrumsFile(song)
 }
@@ -66,7 +77,19 @@ async function deleteDrumsFile(song: Song) {
   const fileRef = firebaseRef(storage, song.drumsPdfStorageRef)
   deleteObject(fileRef)
   song.drumsPdfStorageRef = ''
-  currentDrumsFile.value.dataURL = null
+  resetCurrentDrumsFile()
+
+  if (song.drumsPdfImageStorageRefs) {
+    for (const imgRef of song.drumsPdfImageStorageRefs) {
+      try {
+        await deleteObject(firebaseRef(storage, imgRef))
+      } catch (e) {
+        console.warn(`Failed to delete old drums image ${imgRef}:`, e)
+      }
+    }
+    song.drumsPdfImageStorageRefs = []
+  }
+
   await saveSong(song)
 }
 
@@ -348,19 +371,24 @@ async function migratePdfsToWebp() {
 
                 <template v-if="item.drumsPdfStorageRef">
                   <h4 class="mt-4">Current Drums PDF:</h4>
-                  <div class="d-flex flex-wrap justify-center ga-2">
-                    <vue-pdf-embed
-                      class="border"
-                      v-for="page in currentDrumsFile.pageCount"
-                      @vue:before-mount="setCurrentDrumsFile(item)"
-                      @vue:before-unmount="currentDrumsFile.dataURL = null"
-                      @loaded="
-                        ({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))
-                      "
-                      :height="200"
-                      :page="page"
-                      :source="currentDrumsFile.dataURL"
-                    />
+                  <div
+                    class="d-flex flex-wrap justify-center ga-2"
+                    @vue:before-mount="setCurrentDrumsFile(item)"
+                    @vue:before-unmount="resetCurrentDrumsFile()"
+                  >
+                    <template v-if="currentDrumsFile.urls.length > 0">
+                      <img
+                        class="border"
+                        v-for="(url, index) in currentDrumsFile.urls"
+                        :key="url"
+                        :src="url"
+                        :alt="`Drums page ${index + 1}`"
+                        style="height: 200px; object-fit: contain"
+                      />
+                    </template>
+                    <div v-else class="text-grey text-caption">
+                      No cached preview images available for this file yet.
+                    </div>
                   </div>
                   <v-btn color="error" @click="deleteDrumsFile(item)" class="mt-2">Remove Drums PDF</v-btn>
                 </template>

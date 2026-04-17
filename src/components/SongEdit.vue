@@ -6,7 +6,6 @@ import { useDebounceFn } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { ref } from 'vue'
-import VuePdfEmbed from 'vue-pdf-embed'
 
 defineProps<{
   song: Song
@@ -21,15 +20,26 @@ const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, son
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
 
-const currentDrumsFile = ref({
-  dataURL: null as string | null,
-  loading: false,
-  pageCount: 1,
-})
+function createPdfPreviewState() {
+  return {
+    urls: [] as string[],
+  }
+}
+
+const currentDrumsFile = ref(createPdfPreviewState())
+
+function resetCurrentDrumsFile() {
+  currentDrumsFile.value = createPdfPreviewState()
+}
 
 async function setCurrentDrumsFile(song: Song) {
-  currentDrumsFile.value.loading = true
-  currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
+  resetCurrentDrumsFile()
+
+  if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
+    currentDrumsFile.value.urls = await Promise.all(
+      song.drumsPdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+  }
 }
 
 async function saveDrumsFile(song: Song, file: File) {
@@ -80,20 +90,24 @@ async function deleteDrumsFile(song: Song) {
     song.drumsPdfImageStorageRefs = []
   }
 
-  currentDrumsFile.value.dataURL = null
+  resetCurrentDrumsFile()
   await saveSong(song)
 }
 
-const currentSheetFile = ref({
-  dataURL: null as string | null,
-  loading: false,
-  pageCount: 1,
-})
+const currentSheetFile = ref(createPdfPreviewState())
+
+function resetCurrentSheetFile() {
+  currentSheetFile.value = createPdfPreviewState()
+}
 
 async function setCurrentSheetFile(song: Song) {
-  if (!song.pdfStorageRef) return
-  currentSheetFile.value.loading = true
-  currentSheetFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
+  resetCurrentSheetFile()
+
+  if (song.pdfImageStorageRefs && song.pdfImageStorageRefs.length > 0) {
+    currentSheetFile.value.urls = await Promise.all(
+      song.pdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
+    )
+  }
 }
 
 async function saveSheetFile(song: Song, file: File) {
@@ -150,7 +164,7 @@ async function deleteSheetFile(song: Song) {
     song.pdfImageStorageRefs = []
   }
 
-  currentSheetFile.value.dataURL = null
+  resetCurrentSheetFile()
   await saveSong(song)
 }
 </script>
@@ -277,18 +291,22 @@ async function deleteSheetFile(song: Song) {
       />
 
       <template v-if="song.drumsPdfStorageRef">
-        <div class="d-flex flex-wrap justify-center ga-2 mb-3">
-          <vue-pdf-embed
-            class="border"
-            v-for="page in currentDrumsFile.pageCount"
-            :key="page"
-            @vue:before-mount="setCurrentDrumsFile(song)"
-            @vue:before-unmount="currentDrumsFile.dataURL = null"
-            @loaded="({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))"
-            :height="200"
-            :page="page"
-            :source="currentDrumsFile.dataURL"
-          />
+        <div
+          class="d-flex flex-wrap justify-center ga-2 mb-3"
+          @vue:before-mount="setCurrentDrumsFile(song)"
+          @vue:before-unmount="resetCurrentDrumsFile()"
+        >
+          <template v-if="currentDrumsFile.urls.length > 0">
+            <img
+              class="border"
+              v-for="(url, index) in currentDrumsFile.urls"
+              :key="url"
+              :src="url"
+              :alt="`Drums page ${index + 1}`"
+              style="height: 200px; object-fit: contain"
+            />
+          </template>
+          <div v-else class="text-grey text-caption">No cached preview images available for this file yet.</div>
         </div>
         <v-btn color="error" @click="deleteDrumsFile(song)" block>Remove Drums PDF</v-btn>
       </template>
@@ -307,18 +325,22 @@ async function deleteSheetFile(song: Song) {
       />
 
       <template v-if="song.pdfStorageRef">
-        <div class="d-flex flex-wrap justify-center ga-2 mb-3">
-          <vue-pdf-embed
-            class="border"
-            v-for="page in currentSheetFile.pageCount"
-            :key="page"
-            @vue:before-mount="setCurrentSheetFile(song)"
-            @vue:before-unmount="currentSheetFile.dataURL = null"
-            @loaded="({ numPages }) => ((currentSheetFile.pageCount = numPages), (currentSheetFile.loading = false))"
-            :height="200"
-            :page="page"
-            :source="currentSheetFile.dataURL"
-          />
+        <div
+          class="d-flex flex-wrap justify-center ga-2 mb-3"
+          @vue:before-mount="setCurrentSheetFile(song)"
+          @vue:before-unmount="resetCurrentSheetFile()"
+        >
+          <template v-if="currentSheetFile.urls.length > 0">
+            <img
+              class="border"
+              v-for="(url, index) in currentSheetFile.urls"
+              :key="url"
+              :src="url"
+              :alt="`Sheet page ${index + 1}`"
+              style="height: 200px; object-fit: contain"
+            />
+          </template>
+          <div v-else class="text-grey text-caption">No cached preview images available for this file yet.</div>
         </div>
         <v-btn color="error" class="mb-3" @click="deleteSheetFile(song)" block>Remove Sheet PDF</v-btn>
       </template>
