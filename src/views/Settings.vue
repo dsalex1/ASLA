@@ -50,8 +50,8 @@ function resetCurrentDrumsFile() {
 }
 
 async function setCurrentDrumsFile(song: Song) {
-  currentDrumsFile.value.loading = true
   resetCurrentDrumsFile()
+  currentDrumsFile.value.loading = true
 
   if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
     currentDrumsFile.value.urls = await Promise.all(
