@@ -386,6 +386,9 @@ async function migratePdfsToWebp() {
                         style="height: 200px; object-fit: contain"
                       />
                     </template>
+                    <div v-else class="text-grey text-caption">
+                      No cached preview images available for this file yet.
+                    </div>
                   </div>
                   <v-btn color="error" @click="deleteDrumsFile(item)" class="mt-2">Remove Drums PDF</v-btn>
                 </template>
