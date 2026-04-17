@@ -11,7 +11,6 @@ import { useDebounceFn } from '@vueuse/core'
 import { doc, getDocs, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref } from 'vue'
-import VuePdfEmbed from 'vue-pdf-embed'
 import { useCollection } from 'vuefire'
 
 const { baseDirectory, chooseNewSheetBaseDirectory } = useSheetBaseDirectory()
@@ -36,10 +35,7 @@ const strCrossProduct = <const T extends string, const U extends string>(arr1: T
 
 function createDrumsPreviewState() {
   return {
-    dataURL: null as string | null,
     urls: [] as string[],
-    loading: false,
-    pageCount: 1,
   }
 }
 
@@ -51,23 +47,12 @@ function resetCurrentDrumsFile() {
 
 async function setCurrentDrumsFile(song: Song) {
   resetCurrentDrumsFile()
-  currentDrumsFile.value.loading = true
 
   if (song.drumsPdfImageStorageRefs && song.drumsPdfImageStorageRefs.length > 0) {
     currentDrumsFile.value.urls = await Promise.all(
       song.drumsPdfImageStorageRefs.map((ref) => getDownloadURL(firebaseRef(getStorage(), ref)))
     )
-    currentDrumsFile.value.pageCount = currentDrumsFile.value.urls.length || 1
-    currentDrumsFile.value.loading = false
-    return
   }
-
-  if (!song.drumsPdfStorageRef) {
-    currentDrumsFile.value.loading = false
-    return
-  }
-
-  currentDrumsFile.value.dataURL = await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
 }
 
 async function saveDrumsFile(song: Song, file: File) {
@@ -399,19 +384,6 @@ async function migratePdfsToWebp() {
                         :src="url"
                         :alt="`Drums page ${index + 1}`"
                         style="height: 200px; object-fit: contain"
-                      />
-                    </template>
-                    <template v-else-if="currentDrumsFile.dataURL">
-                      <vue-pdf-embed
-                        class="border"
-                        v-for="page in currentDrumsFile.pageCount"
-                        :key="page"
-                        @loaded="
-                          ({ numPages }) => ((currentDrumsFile.pageCount = numPages), (currentDrumsFile.loading = false))
-                        "
-                        :height="200"
-                        :page="page"
-                        :source="currentDrumsFile.dataURL"
                       />
                     </template>
                   </div>
