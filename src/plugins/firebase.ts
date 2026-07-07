@@ -1,12 +1,14 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import {
   collection,
   CollectionReference,
+  connectFirestoreEmulator,
   Firestore,
   initializeFirestore,
   persistentLocalCache,
 } from 'firebase/firestore'
+import { connectStorageEmulator, getStorage } from 'firebase/storage'
 import { getPerformance } from 'firebase/performance'
 import { getAnalytics } from 'firebase/analytics'
 import { Setlist, Song } from '@/types'
@@ -27,11 +29,19 @@ export const app = initializeApp(firebaseConfig)
 
 export const auth = getAuth(app)
 
-export const db = initializeFirestore(app, { localCache: persistentLocalCache({}) })
+const useEmulators = env.VITE_FIREBASE_EMULATORS === 'true'
 
-//get performance and analytics infos collected
-export const perf = getPerformance(app)
-export const analytics = getAnalytics(app)
+export const db = initializeFirestore(app, useEmulators ? {} : { localCache: persistentLocalCache({}) })
+
+if (useEmulators) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+  connectFirestoreEmulator(db, '127.0.0.1', 8080)
+  connectStorageEmulator(getStorage(app), '127.0.0.1', 9199)
+}
+
+//get performance and analytics infos collected (not against emulators)
+export const perf = useEmulators ? undefined : getPerformance(app)
+export const analytics = useEmulators ? undefined : getAnalytics(app)
 
 const typedCollection = <T>(db: Firestore, col: string) => collection(db, col) as CollectionReference<T>
 

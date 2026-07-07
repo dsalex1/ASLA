@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import AnnotationEditor from '@/components/AnnotationEditor.vue'
 import LyricsViewer from '@/components/LyricsViewer.vue'
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
+import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { CustomSetlistEntry, Song } from '@/types'
 import { useSwipe, useWindowSize } from '@vueuse/core'
-import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
+import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref, watch, watchEffect } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
 import { VBtn } from 'vuetify/components'
@@ -12,6 +14,7 @@ import { VBtn } from 'vuetify/components'
 const props = defineProps<{
   songs: (Song | CustomSetlistEntry)[]
   mode?: 'lyrics' | 'chords' | 'drums'
+  annotatable?: boolean
 }>()
 
 const { pdfTree } = useSheetBaseDirectory()
@@ -80,6 +83,7 @@ const currentFileIndex = ref(0)
 const currentFilePage = ref(1)
 
 function next() {
+  if (annot.value) return
   if (currentFilePage.value < fileContents.value[currentFileIndex.value].pageCount!) currentFilePage.value++
   else if (currentFileIndex.value < fileContents.value.length - 1) {
     currentFileIndex.value++
@@ -87,10 +91,139 @@ function next() {
   }
 }
 function prev() {
+  if (annot.value) return
   if (currentFilePage.value > 1) currentFilePage.value--
   else if (currentFileIndex.value > 0) {
     currentFileIndex.value--
     currentFilePage.value = fileContents.value[currentFileIndex.value].pageCount!
+  }
+}
+
+// --- PDF ink annotation mode ---
+const annot = ref<{
+  bytes: Uint8Array
+  pages: PageAnnotations[]
+  refPath: string
+  fileIndex: number
+  dirty: boolean
+  saving: boolean
+  undoStack: StrokeOp[]
+  redoStack: StrokeOp[]
+} | null>(null)
+const annotLoading = ref(false)
+const annotTool = ref<'pen' | 'eraser'>('pen')
+const annotGray = ref(0)
+const annotWidth = ref(2)
+const annotColors = [0, 0.5, 1]
+const annotWidths = [2, 5, 10]
+
+const currentAnnotRefPath = computed(() => {
+  const song = props.songs[currentFileIndex.value]
+  if (!song || !('pdfStorageRef' in song)) return ''
+  if (props.mode == 'drums') return song.drumsPdfStorageRef || ''
+  if (props.mode == 'chords') return song.pdfStorageRef || ''
+  return ''
+})
+
+async function startAnnotating() {
+  if (annotLoading.value || annot.value) return // guard double-clicks: a second run would discard drawn strokes
+  annotLoading.value = true
+  try {
+    const refPath = currentAnnotRefPath.value
+    const url = await getDownloadURL(firebaseRef(getStorage(), refPath))
+    const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
+    const pages = await readAnnotations(bytes)
+    fileContents.value[currentFileIndex.value].pageCount = pages.length
+    if (currentFilePage.value > pages.length) currentFilePage.value = 1
+    annot.value = {
+      bytes,
+      pages,
+      refPath,
+      fileIndex: currentFileIndex.value,
+      dirty: false,
+      saving: false,
+      undoStack: [],
+      redoStack: [],
+    }
+  } catch (e) {
+    console.error('Failed to load PDF for annotation:', e)
+    alert('Failed to load PDF for annotation')
+  } finally {
+    annotLoading.value = false
+  }
+}
+
+function onAnnotOp(op: StrokeOp) {
+  const a = annot.value!
+  a.undoStack.push(op)
+  a.redoStack = []
+  a.dirty = true
+}
+
+// apply an op forwards (redo) or backwards (undo)
+function applyAnnotOp(op: StrokeOp, reverse: boolean) {
+  const strokes = annot.value!.pages[op.pageIndex].strokes
+  if ((op.type === 'add') !== reverse) strokes.splice(op.index, 0, op.stroke)
+  else strokes.splice(op.index, 1)
+  currentFilePage.value = op.pageIndex + 1 // show the affected page
+  annot.value!.dirty = true
+}
+
+function undoAnnot() {
+  const op = annot.value?.undoStack.pop()
+  if (!op) return
+  applyAnnotOp(op, true)
+  annot.value!.redoStack.push(op)
+}
+
+function redoAnnot() {
+  const op = annot.value?.redoStack.pop()
+  if (!op) return
+  applyAnnotOp(op, false)
+  annot.value!.undoStack.push(op)
+}
+
+function stopAnnotating() {
+  if (annot.value?.dirty && !confirm('Discard unsaved annotations?')) return
+  annot.value = null
+}
+
+async function saveAnnotations() {
+  const a = annot.value
+  if (!a || a.saving) return
+  a.saving = true
+  try {
+    const newBytes = await writeAnnotations(
+      a.bytes,
+      a.pages.map((p) => p.strokes)
+    )
+    const storage = getStorage()
+    await uploadBytes(firebaseRef(storage, a.refPath), newBytes, { contentType: 'application/pdf' })
+
+    // regenerate the cached page images so they include the annotations
+    const song = props.songs[a.fileIndex] as Song
+    const imgRefs = props.mode == 'drums' ? song.drumsPdfImageStorageRefs : song.pdfImageStorageRefs
+    if (imgRefs?.length) {
+      const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
+      const blobs = await generateWebPImagesFromPdf(newBytes.slice().buffer)
+      await Promise.all(
+        imgRefs.map((r, i) =>
+          blobs[i] ? uploadBytes(firebaseRef(storage, r), blobs[i], { contentType: 'image/webp' }) : undefined
+        )
+      )
+    }
+
+    a.bytes = newBytes
+    a.dirty = false
+    // refresh the normal view with the annotated file
+    const file = fileContents.value[a.fileIndex]
+    if (file?.isPdf) file.dataUrl = URL.createObjectURL(new Blob([newBytes as BlobPart], { type: 'application/pdf' }))
+    else file.urls = file.urls.map((u) => u.split('&_bust=')[0] + '&_bust=' + Date.now())
+  } catch (e) {
+    console.error('Failed to save annotations:', e)
+    alert('Failed to save annotations')
+  } finally {
+    a.saving = false
   }
 }
 
@@ -191,6 +324,7 @@ function formatDuration(duration?: number) {
           class="p-0"
           style="min-width: 0; padding-inline: 5px !important; position: relative"
           v-for="(file, i) in fileContents"
+          :disabled="!!annot && i !== currentFileIndex"
           @click=";((currentFileIndex = i), (currentFilePage = 1))"
         >
           {{ file.name.length > 15 ? file.name.slice(0, 15) + '...' : file.name }}
@@ -209,8 +343,107 @@ function formatDuration(duration?: number) {
       </div>
     </div>
 
+    <!-- annotation toolbar -->
+    <div class="w-100 d-flex flex-wrap justify-center align-center ga-2 py-1" v-if="annot">
+      <div>
+        <v-btn
+          v-for="gray in annotColors"
+          :key="gray"
+          density="compact"
+          :variant="annotTool == 'pen' && annotGray == gray ? 'outlined' : 'text'"
+          icon
+          @click=";((annotGray = gray), (annotTool = 'pen'))"
+        >
+          <div
+            :style="{
+              width: '18px',
+              height: '18px',
+              borderRadius: '50%',
+              border: '1px solid #888',
+              backgroundColor: `rgb(${gray * 255},${gray * 255},${gray * 255})`,
+            }"
+          ></div>
+        </v-btn>
+      </div>
+      <div>
+        <v-btn
+          v-for="(w, i) in annotWidths"
+          :key="w"
+          density="compact"
+          :variant="annotTool == 'pen' && annotWidth == w ? 'outlined' : 'text'"
+          icon
+          @click=";((annotWidth = w), (annotTool = 'pen'))"
+        >
+          <div
+            :style="{
+              width: `${8 + i * 5}px`,
+              height: `${8 + i * 5}px`,
+              borderRadius: '50%',
+              backgroundColor: 'currentColor',
+            }"
+          ></div>
+        </v-btn>
+      </div>
+      <v-btn
+        density="compact"
+        :variant="annotTool == 'eraser' ? 'outlined' : 'text'"
+        icon="fas fa-eraser"
+        @click="annotTool = 'eraser'"
+      />
+      <v-divider vertical />
+      <div>
+        <v-btn
+          density="compact"
+          variant="text"
+          icon="fas fa-rotate-left"
+          :disabled="!annot.undoStack.length"
+          @click="undoAnnot"
+        />
+        <v-btn
+          density="compact"
+          variant="text"
+          icon="fas fa-rotate-right"
+          :disabled="!annot.redoStack.length"
+          @click="redoAnnot"
+        />
+      </div>
+      <v-divider vertical />
+      <div>
+        <v-btn
+          density="compact"
+          variant="text"
+          icon="fas fa-chevron-left"
+          :disabled="currentFilePage <= 1"
+          @click="currentFilePage--"
+        />
+        <span>{{ currentFilePage }}/{{ annot.pages.length }}</span>
+        <v-btn
+          density="compact"
+          variant="text"
+          icon="fas fa-chevron-right"
+          :disabled="currentFilePage >= annot.pages.length"
+          @click="currentFilePage++"
+        />
+      </div>
+      <v-divider vertical />
+      <div>
+        <v-btn
+          density="compact"
+          variant="tonal"
+          color="primary"
+          prepend-icon="fas fa-floppy-disk"
+          :loading="annot.saving"
+          :disabled="!annot.dirty"
+          @click="saveAnnotations"
+        >
+          Save
+        </v-btn>
+        <v-btn density="compact" variant="text" icon="fas fa-check-circle" @click="stopAnnotating" />
+      </div>
+    </div>
+
     <!-- song infos-->
-    <div class="w-100 text-center" v-if="currentSong && 'name' in currentSong">
+    <div class="w-100 text-center" v-if="!annot && currentSong && 'name' in currentSong">
       <span v-html="getSongInformation(currentSong)" />
       <span v-if="currentSong?.duration">
         -
@@ -227,6 +460,15 @@ function formatDuration(duration?: number) {
       >
         {{ shallShowLyrics ? 'Sheets' : 'Lyrics' }}
       </v-btn>
+      <v-btn
+        v-if="props.annotatable && currentAnnotRefPath && !showLyrics"
+        class="ms-2"
+        variant="tonal"
+        density="compact"
+        icon="fas fa-pen"
+        :loading="annotLoading"
+        @click="startAnnotating"
+      />
       <template v-if="showLyrics">
         <v-btn
           class="ms-2"
@@ -265,8 +507,28 @@ function formatDuration(duration?: number) {
       "
       ref="swipeTarget"
     >
-      <div @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
-      <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
+      <div
+        v-if="!annot"
+        @click="prev()"
+        style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"
+      ></div>
+      <div
+        v-if="!annot"
+        @click="next()"
+        style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"
+      ></div>
+      <AnnotationEditor
+        v-if="annot"
+        style="z-index: 30"
+        :bytes="annot.bytes"
+        :pages="annot.pages"
+        :page="currentFilePage"
+        :displayHeight="pdfHeight"
+        :tool="annotTool"
+        :gray="annotGray"
+        :strokeWidth="annotWidth"
+        @op="onAnnotOp"
+      />
       <div
         :key="currentFileIndex"
         v-if="showLyrics && (currentSong === undefined || 'name' in currentSong)"
@@ -304,7 +566,7 @@ function formatDuration(duration?: number) {
         </div>
       </div>
       <div
-        v-if="props.mode != 'lyrics'"
+        v-if="props.mode != 'lyrics' && !annot"
         v-for="(file, i) in fileContents"
         :style="{ opacity: i === currentFileIndex && !showLyrics ? 1 : 0 }"
         style="width: 0px"
