@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
 import SongListItem from '@/components/SongListItem.vue'
@@ -24,8 +24,15 @@ function onInsert(event: any) {
 }
 
 const mappedTree = computed(() => mapTree(props.files, (e) => ({ title: e.name })))
+
+const searchQuery = ref('')
+
 const filteredTree = computed(() => {
-  return filterTree(mappedTree.value, (e) => !selectedFiles.value.includes(e.title))
+  const query = searchQuery.value.trim().toLowerCase()
+  return filterTree(
+    mappedTree.value,
+    (e) => !selectedFiles.value.includes(e.title) && (!query || e.title.toLowerCase().includes(query))
+  )
 })
 
 const songsDocs = useCollection(songCollection)
@@ -87,7 +94,23 @@ function getSongByFilename(filename: string) {
         </drag>
       </div>
       <h3>Available files</h3>
-      <v-treeview :items="filteredTree" density="compact" class="disable-active-underlay">
+      <v-text-field
+        v-model="searchQuery"
+        label="Search songs"
+        placeholder="Search songs"
+        prepend-inner-icon="fas fa-magnifying-glass"
+        variant="outlined"
+        density="compact"
+        hide-details
+        clearable
+        class="mb-2"
+      />
+      <v-treeview
+        :items="filteredTree"
+        :open-all="!!searchQuery"
+        density="compact"
+        class="disable-active-underlay"
+      >
         <template v-slot:item="{ props }">
           <drag :data="props.title" class="item" :key="props.title" handle=".drag-handle">
             <v-treeview-item
