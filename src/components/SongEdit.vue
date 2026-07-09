@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { lyricsHasChords } from '@/helpers/lyrics'
-import { songCollection } from '@/plugins/firebase'
+import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
-import { doc, updateDoc } from 'firebase/firestore'
+import { arrayRemove, deleteDoc, doc, getDocs, query, updateDoc, where } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { ref } from 'vue'
 
@@ -13,6 +13,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'deleted'): void
 }>()
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
@@ -166,6 +167,48 @@ async function deleteSheetFile(song: Song) {
 
   resetCurrentSheetFile()
   await saveSong(song)
+}
+
+const deleting = ref(false)
+
+async function deleteSong(song: Song) {
+  const usedIn = await getDocs(query(setlistCollection, where('songs', 'array-contains', song.id)))
+  const setlistNames = usedIn.docs.map((d) => d.data().name || 'Untitled')
+  const warning =
+    setlistNames.length > 0
+      ? `\n\nWarning: it is used in ${setlistNames.length} setlist(s): ${setlistNames.join(', ')}.`
+      : ''
+  if (
+    !window.confirm(
+      `Are you sure you want to delete the song "${song.name || song.filename}"? This will also delete all its files.${warning}`
+    )
+  )
+    return
+
+  deleting.value = true
+  try {
+    const storage = getStorage()
+    const storageRefs = [
+      song.pdfStorageRef,
+      ...(song.pdfImageStorageRefs ?? []),
+      song.drumsPdfStorageRef,
+      ...(song.drumsPdfImageStorageRefs ?? []),
+    ].filter((ref): ref is string => !!ref)
+    await Promise.all(
+      storageRefs.map((storageRef) =>
+        deleteObject(firebaseRef(storage, storageRef)).catch((e) =>
+          console.warn('Failed to delete file, might not exist: ', e)
+        )
+      )
+    )
+    await Promise.all(usedIn.docs.map((setlistDoc) => updateDoc(setlistDoc.ref, { songs: arrayRemove(song.id) })))
+    await deleteDoc(doc(songCollection, song.id!))
+    emit('deleted')
+    emit('close')
+  } catch (e) {
+    console.error('Failed to delete song:', e)
+  }
+  deleting.value = false
 }
 </script>
 
@@ -344,6 +387,12 @@ async function deleteSheetFile(song: Song) {
         </div>
         <v-btn color="error" class="mb-3" @click="deleteSheetFile(song)" block>Remove Sheet PDF</v-btn>
       </template>
+
+      <v-divider class="mb-3" />
+
+      <v-btn color="error" :loading="deleting" @click="deleteSong(song)" block prepend-icon="fas fa-trash">
+        Delete Song
+      </v-btn>
     </v-card-text>
   </v-card>
 </template>
