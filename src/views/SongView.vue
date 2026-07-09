@@ -5,10 +5,11 @@ import SongEdit from '@/components/SongEdit.vue'
 import FullscreenLayout from '@/layouts/FullscreenLayout.vue'
 import { songCollection } from '@/plugins/firebase'
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useCollection } from 'vuefire'
 
 const route = useRoute()
+const router = useRouter()
 const editDialogOpen = ref(false)
 
 const songId = computed(() => route.params.id as string)
@@ -37,7 +38,7 @@ const songs = computed(() => (currentSong.value ? [currentSong.value] : []))
       </h2>
     </FileViewer>
     <v-dialog v-model="editDialogOpen" max-width="800px" scrollable>
-      <SongEdit v-if="currentSong" :song="currentSong" @close="editDialogOpen = false" />
+      <SongEdit v-if="currentSong" :song="currentSong" @close="editDialogOpen = false" @deleted="router.push('/song')" />
     </v-dialog>
   </FullscreenLayout>
 </template>
