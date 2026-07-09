@@ -84,7 +84,13 @@ async function pick(result: UgSearchResult) {
       max-height="300"
       style="overflow-y: auto"
     >
-      <v-list-item v-for="result in results" :key="result.url" :title="result.title" :subtitle="result.artist" @click="pick(result)">
+      <v-list-item
+        v-for="result in results"
+        :key="result.url"
+        :title="result.title"
+        :subtitle="result.votes ? `${result.artist} · ${result.votes.toLocaleString()} votes` : result.artist"
+        @click="pick(result)"
+      >
         <template #append>
           <v-progress-circular v-if="importingUrl === result.url" indeterminate size="20" />
         </template>
