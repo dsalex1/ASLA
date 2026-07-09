@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:test": "vite --mode test",
-    "emulators": "firebase emulators:start --project demo-asla",
     "seed": "node scripts/seedEmulator.mjs",
+    "emulators": "firebase emulators:start --project demo-asla",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
   },
