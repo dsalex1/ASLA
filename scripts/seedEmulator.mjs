@@ -57,6 +57,12 @@ await setDoc(doc(db, 'songs', 'test-song'), {
   lyrics: 'La la la\nTest lyrics line 2',
 })
 
+// No lyrics: exercises the "Import from Ultimate Guitar" button in SongEdit.
+await setDoc(doc(db, 'songs', 'wonderwall'), {
+  filename: 'wonderwall',
+  name: 'Wonderwall',
+})
+
 await setDoc(doc(db, 'setlist', 'test-setlist'), {
   name: 'Test Setlist',
   songs: ['test-song'],

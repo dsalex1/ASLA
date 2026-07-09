@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { lyricsHasChords } from '@/helpers/lyrics'
+import { fetchUltimateGuitarTab, searchUltimateGuitar, UGVersion } from '@/helpers/ultimateGuitar'
 import { songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   song: Song
 }>()
 
@@ -16,6 +17,38 @@ const emit = defineEmits<{
 }>()
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+// Ultimate Guitar import: when the song has no chords yet, search UG by name;
+// if versions exist, an import button appears.
+const ugVersions = ref<UGVersion[]>([])
+const ugDialogOpen = ref(false)
+const ugImporting = ref(false)
+
+const searchUg = useDebounceFn(async (song: Song) => {
+  ugVersions.value = []
+  if (!song.name || lyricsHasChords(song.lyrics)) return
+  try {
+    ugVersions.value = await searchUltimateGuitar(song.name)
+  } catch (e) {
+    console.warn('Ultimate Guitar search failed:', e)
+  }
+}, 500)
+
+watch(() => [props.song.id, props.song.name], () => searchUg(props.song), { immediate: true })
+
+async function importUgVersion(song: Song, version: UGVersion) {
+  ugImporting.value = true
+  try {
+    song.lyrics = await fetchUltimateGuitarTab(version.url)
+    await saveSong(song)
+    ugDialogOpen.value = false
+    ugVersions.value = []
+  } catch (e) {
+    console.error('Ultimate Guitar import failed:', e)
+  } finally {
+    ugImporting.value = false
+  }
+}
 
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
@@ -276,6 +309,42 @@ async function deleteSheetFile(song: Song) {
         density="comfortable"
         class="mb-3"
       />
+
+      <v-btn
+        v-if="ugVersions.length > 0 && !lyricsHasChords(song.lyrics)"
+        color="primary"
+        variant="tonal"
+        prepend-icon="fas fa-guitar"
+        class="mb-3"
+        block
+        @click="ugDialogOpen = true"
+      >
+        Import from Ultimate Guitar
+      </v-btn>
+
+      <v-dialog v-model="ugDialogOpen" max-width="500px">
+        <v-card :loading="ugImporting">
+          <v-card-title>Import from Ultimate Guitar</v-card-title>
+          <v-card-text class="pa-0">
+            <div v-if="song.lyrics" class="text-caption text-warning px-4 pb-2">
+              This will replace the current lyrics.
+            </div>
+            <v-list :disabled="ugImporting">
+              <v-list-item
+                v-for="version in ugVersions"
+                :key="version.url"
+                :title="version.title"
+                :subtitle="`${version.artist} · ${version.votes} votes`"
+                @click="importUgVersion(song, version)"
+              />
+            </v-list>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn @click="ugDialogOpen = false">Cancel</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <v-divider class="mb-3" />
 
