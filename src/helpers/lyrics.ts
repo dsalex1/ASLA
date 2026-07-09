@@ -1,4 +1,12 @@
-export const chordRegex = /^[A-H][b#]?(m|min|maj|M|dim|aug)?(sus|sus2|sus4)?([0-9]{1,2})?([b#][0-9])?((\+|-))?(\/[A-H][b#]?)?$/;
+// Grammar based on common Ultimate-Guitar / popular-music notation:
+// root, optional quality, optional extension number (incl. 6/9), then any run
+// of sus/add/alteration tails (optionally parenthesized), optional slash bass.
+// Covers e.g. A7sus4, Dm7sus4add11/C, C6/9, Cm(maj7), E7#9, Bm7b5/D, C7no3.
+const ROOT = '[A-H][b#]?';
+const QUALITY = '(?:min|maj|Maj|Ma|m|M|dim|aug|°|ø|Δ|\\+|-)?';
+const EXTENSION = '(?:6/9|[0-9]{1,2})?';
+const TAIL = '(?:\\(?(?:sus[24]?|add[0-9]{1,2}|(?:maj|Maj|Ma|M|Δ)[0-9]{1,2}|[b#][0-9]{1,2}|dim|aug|alt|(?:no|omit)[0-9]{1,2}|\\+|-)\\)?)*';
+export const chordRegex = new RegExp(`^${ROOT}${QUALITY}${EXTENSION}${TAIL}(?:/${ROOT})?$`);
 
 export function isChordToken(token: string): boolean {
     return chordRegex.test(token);
@@ -70,7 +78,8 @@ function transposeNote(note: string, semitones: number): string {
 
 export function transposeChord(chord: string, semitones: number): string {
     if (!semitones) return chord;
-    const match = chord.match(/^([A-H][b#]?)([^/]*)(?:\/([A-H][b#]?))?$/);
+    // the core may itself contain "6/9", so it is not simply [^/]*
+    const match = chord.match(/^([A-H][b#]?)((?:6\/9|[^/])*)(?:\/([A-H][b#]?))?$/);
     if (!match) return chord;
     const [, root, quality, bass] = match;
     return transposeNote(root, semitones) + quality + (bass ? '/' + transposeNote(bass, semitones) : '');

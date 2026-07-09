@@ -75,6 +75,12 @@ const chordLyrics = [
   'Take it down real low',
   'Dm   Am   Gsus4 G',
   'Then bring it back again',
+  '',
+  '[Outro]',
+  'A7sus4   Dm7sus4add11/C   C6/9     Fmaj7#11',
+  'Fancy chords everywhere you look',
+  'Cm(maj7) E7#9   Bm7b5/D   G7(b9)',
+  'Even the jazzy ones work fine',
 ].join('\n')
 
 await setDoc(doc(db, 'songs', 'chords-song'), {
