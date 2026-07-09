@@ -2,6 +2,7 @@
 import AnnotationEditor from '@/components/AnnotationEditor.vue'
 import LyricsViewer from '@/components/LyricsViewer.vue'
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
+import { createMetronome } from '@/helpers/metronome'
 import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
 import { songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
@@ -9,7 +10,7 @@ import { CustomSetlistEntry, Song } from '@/types'
 import { useSwipe, useWindowSize } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
-import { computed, ref, watch, watchEffect } from 'vue'
+import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
 import { VBtn } from 'vuetify/components'
 
@@ -293,6 +294,27 @@ function scrollLyricsToBottom(duration: number, offset = 0) {
 
 const currentSong = computed(() => props.songs[currentFileIndex.value])
 
+// --- Drummer click (metronome) ---
+const currentBpm = computed(() =>
+  currentSong.value && 'bpm' in currentSong.value ? currentSong.value.bpm || 0 : 0
+)
+const clicking = ref(false)
+const metronome = createMetronome(() => currentBpm.value)
+
+function toggleClick() {
+  clicking.value = !clicking.value
+  clicking.value ? metronome.start() : metronome.stop()
+}
+
+// stop the click when leaving the song or if it loses its bpm
+watch([currentSong, currentBpm], () => {
+  if (clicking.value) {
+    metronome.stop()
+    clicking.value = false
+  }
+})
+onUnmounted(() => metronome.stop())
+
 watch([currentSong, showLyrics, autoScroll], ([currentSong, showLyrics, autoScroll]) => {
   if (scrollAnimationFrame) {
     cancelAnimationFrame(scrollAnimationFrame)
@@ -501,6 +523,17 @@ function updateLyrics(lyrics: string) {
         :loading="annotLoading"
         @click="startAnnotating"
       />
+      <v-btn
+        v-if="props.mode == 'drums' && currentBpm"
+        class="ms-2"
+        variant="tonal"
+        density="compact"
+        :color="clicking ? 'primary' : undefined"
+        :prepend-icon="clicking ? 'fas fa-pause' : 'fas fa-drum'"
+        @click="toggleClick"
+      >
+        {{ currentBpm }} BPM
+      </v-btn>
       <template v-if="showLyrics">
         <template v-if="props.annotatable && props.mode == 'chords' && !shallShowLyrics && currentSong?.lyrics">
           <v-btn
