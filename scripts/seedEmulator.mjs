@@ -57,11 +57,51 @@ await setDoc(doc(db, 'songs', 'test-song'), {
   lyrics: 'La la la\nTest lyrics line 2',
 })
 
+// No lyrics: exercises the "Import from Ultimate Guitar" button in SongEdit.
+await setDoc(doc(db, 'songs', 'wonderwall'), {
+  filename: 'wonderwall',
+  name: 'Wonderwall',
+})
+
+const chordLyrics = [
+  '[Verse 1]',
+  'C        G        Am       F',
+  'La la la, singing all day long',
+  'C        G/B      F        C',
+  'Test lyrics with some chords',
+  '',
+  '[Chorus]',
+  'F    G    Em7   Am   D/F#',
+  'Everybody sing along now',
+  'Bb   F    C',
+  'One more time',
+  '',
+  '[Bridge]',
+  'Dm   Am   Bb   F',
+  'Take it down real low',
+  'Dm   Am   Gsus4 G',
+  'Then bring it back again',
+  '',
+  '[Outro]',
+  'A7sus4   Dm7sus4add11/C   C6/9     Fmaj7#11',
+  'Fancy chords everywhere you look',
+  'Cm(maj7) E7#9   Bm7b5/D   G7(b9)',
+  'Even the jazzy ones work fine',
+].join('\n')
+
+await setDoc(doc(db, 'songs', 'chords-song'), {
+  filename: '',
+  name: 'Chords Song',
+  bpm: 90,
+  duration: 200,
+  lyrics: chordLyrics,
+})
+
 await setDoc(doc(db, 'setlist', 'test-setlist'), {
   name: 'Test Setlist',
-  songs: ['test-song'],
+  songs: ['test-song', 'chords-song'],
   updatedAt: new Date().toISOString(),
 })
 
-console.log('seeded song "Test Song" (3-page sheet, 2-page drums) and setlist "Test Setlist"')
+console.log('seeded songs "Test Song" (3-page sheet, 2-page drums), "Chords Song" (chord lyrics) and setlist "Test Setlist"')
 process.exit(0)

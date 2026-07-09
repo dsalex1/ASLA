@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** basically auto generated from claude 4 sonnet */
+import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
 import { songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { addDoc } from 'firebase/firestore'
@@ -8,6 +9,14 @@ import { ref } from 'vue'
 const dialog = ref(false)
 const loading = ref(false)
 const error = ref('')
+const importedLyrics = ref<string>()
+
+function applyImport(data: UgImportData) {
+  importedLyrics.value = data.lyrics
+  if (data.bpm && !formData.value.bpm) formData.value.bpm = data.bpm
+  if (data.duration && !formData.value.duration) formData.value.duration = data.duration
+  if (data.key_signature && !formData.value.key_signature) formData.value.key_signature = data.key_signature
+}
 
 const formData = ref<
   Omit<
@@ -50,6 +59,7 @@ async function createSong() {
       bpm: formData.value.bpm,
       duration: formData.value.duration,
       ibi_instrument: formData.value.ibi_instrument,
+      lyrics: importedLyrics.value,
     }
 
     await addDoc(songCollection, JSON.parse(JSON.stringify(songData))) // get rid of undefined fields
@@ -62,6 +72,7 @@ async function createSong() {
       duration: undefined,
       ibi_instrument: undefined,
     }
+    importedLyrics.value = undefined
 
     dialog.value = false
   } catch (e) {
@@ -80,6 +91,7 @@ function resetForm() {
     duration: undefined,
     ibi_instrument: undefined,
   }
+  importedLyrics.value = undefined
   error.value = ''
 }
 </script>
@@ -108,6 +120,14 @@ function resetForm() {
                   hide-details="auto"
                   density="compact"
                 />
+              </v-col>
+
+              <v-col cols="12" v-if="formData.name?.trim()">
+                <UltimateGuitarImport :query="formData.name || ''" @import="applyImport" />
+                <div v-if="importedLyrics" class="text-success text-caption mt-1">
+                  <v-icon size="x-small" icon="fas fa-check" />
+                  Lyrics imported ({{ importedLyrics.split('\n').length }} lines)
+                </div>
               </v-col>
 
               <v-col cols="12" sm="6">

@@ -31,4 +31,5 @@ export type Song = {
   bpm?: number
   duration?: number
   lyrics?: string
+  transpose?: number // semitones (-11..11) applied to chords in the lyrics chord view
 }

@@ -1,4 +1,12 @@
-export const chordRegex = /^[A-H][b#]?(m|min|maj|M|dim|aug)?(sus|sus2|sus4)?([0-9]{1,2})?([b#][0-9])?((\+|-))?(\/[A-H][b#]?)?$/;
+// Grammar based on common Ultimate-Guitar / popular-music notation:
+// root, optional quality, optional extension number (incl. 6/9), then any run
+// of sus/add/alteration tails (optionally parenthesized), optional slash bass.
+// Covers e.g. A7sus4, Dm7sus4add11/C, C6/9, Cm(maj7), E7#9, Bm7b5/D, C7no3.
+const ROOT = '[A-H][b#]?';
+const QUALITY = '(?:min|maj|Maj|Ma|m|M|dim|aug|°|ø|Δ|\\+|-)?';
+const EXTENSION = '(?:6/9|[0-9]{1,2})?';
+const TAIL = '(?:\\(?(?:sus[24]?|add[0-9]{1,2}|(?:maj|Maj|Ma|M|Δ)[0-9]{1,2}|[b#][0-9]{1,2}|dim|aug|alt|(?:no|omit)[0-9]{1,2}|\\+|-)\\)?)*';
+export const chordRegex = new RegExp(`^${ROOT}${QUALITY}${EXTENSION}${TAIL}(?:/${ROOT})?$`);
 
 export function isChordToken(token: string): boolean {
     return chordRegex.test(token);
@@ -56,4 +64,58 @@ export function tokenizeChordLine(line: string) {
         if (part.trim() === '') return { text: part, isChord: false };
         return { text: part, isChord: isChordToken(part) };
     });
+}
+
+const NOTE_VALUES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11, H: 11 };
+const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+function transposeNote(note: string, semitones: number): string {
+    const value = NOTE_VALUES[note[0]] + (note[1] === '#' ? 1 : note[1] === 'b' ? -1 : 0);
+    const names = semitones < 0 ? FLAT_NAMES : SHARP_NAMES;
+    return names[(((value + semitones) % 12) + 12) % 12];
+}
+
+export function transposeChord(chord: string, semitones: number): string {
+    if (!semitones) return chord;
+    // the core may itself contain "6/9", so it is not simply [^/]*
+    const match = chord.match(/^([A-H][b#]?)((?:6\/9|[^/])*)(?:\/([A-H][b#]?))?$/);
+    if (!match) return chord;
+    const [, root, quality, bass] = match;
+    return transposeNote(root, semitones) + quality + (bass ? '/' + transposeNote(bass, semitones) : '');
+}
+
+// Transpose chord tokens while shrinking/growing the following whitespace so
+// later chords keep their column above the lyrics line.
+export function transposeTokens(tokens: ReturnType<typeof tokenizeChordLine>, semitones: number) {
+    if (!semitones) return tokens;
+    let drift = 0; // chars emitted so far minus original chars
+    return tokens.map(token => {
+        if (token.isChord) {
+            const text = transposeChord(token.text, semitones);
+            drift += text.length - token.text.length;
+            return { ...token, text };
+        }
+        if (drift !== 0 && /^ +$/.test(token.text)) {
+            const length = Math.max(1, token.text.length - drift);
+            drift -= token.text.length - length;
+            return { ...token, text: ' '.repeat(length) };
+        }
+        return token;
+    });
+}
+
+// Replace one token of a chord line, absorbing the length change into the
+// following whitespace so later chords keep their column.
+export function replaceChordInLine(line: string, tokenIdx: number, newText: string): string {
+    const tokens = tokenizeChordLine(line);
+    let drift = newText.length - tokens[tokenIdx].text.length;
+    tokens[tokenIdx] = { text: newText, isChord: isChordToken(newText) };
+    for (let i = tokenIdx + 1; i < tokens.length && drift !== 0; i++) {
+        if (!/^ +$/.test(tokens[i].text)) continue;
+        const length = Math.max(1, tokens[i].text.length - drift);
+        drift -= tokens[i].text.length - length;
+        tokens[i] = { text: ' '.repeat(length), isChord: false };
+    }
+    return tokens.map(t => t.text).join('');
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
 import { lyricsHasChords } from '@/helpers/lyrics'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
@@ -17,6 +18,15 @@ const emit = defineEmits<{
 }>()
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+function applyImport(song: Song, data: UgImportData) {
+  if (song.lyrics && !confirm('Overwrite existing lyrics?')) return
+  song.lyrics = data.lyrics
+  if (data.bpm && !song.bpm) song.bpm = data.bpm
+  if (data.duration && !song.duration) song.duration = data.duration
+  if (data.key_signature && !song.key_signature) song.key_signature = data.key_signature
+  saveSong(song)
+}
 
 const strCrossProduct = <const T extends string, const U extends string>(arr1: T[], arr2: U[]): `${T}${U}`[] =>
   arr2.flatMap((b) => arr1.map((a) => `${a}${b}` as `${T}${U}`))
@@ -227,6 +237,8 @@ async function deleteSong(song: Song) {
         density="comfortable"
         class="mb-3"
       />
+
+      <UltimateGuitarImport :query="song.name || ''" class="mb-3" @import="(data) => applyImport(song, data)" />
 
       <div class="d-flex gap-2 mb-3">
         <v-autocomplete

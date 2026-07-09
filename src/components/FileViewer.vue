@@ -3,9 +3,11 @@ import AnnotationEditor from '@/components/AnnotationEditor.vue'
 import LyricsViewer from '@/components/LyricsViewer.vue'
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
 import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
+import { songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { CustomSetlistEntry, Song } from '@/types'
 import { useSwipe, useWindowSize } from '@vueuse/core'
+import { doc, updateDoc } from 'firebase/firestore'
 import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, ref, watch, watchEffect } from 'vue'
 import VuePdfEmbed from 'vue-pdf-embed'
@@ -308,6 +310,32 @@ watch([currentSong, showLyrics, autoScroll], ([currentSong, showLyrics, autoScro
 function formatDuration(duration?: number) {
   return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
 }
+
+// --- chord transposition & inline chord editing (lyrics chord view) ---
+const transpose = computed(() =>
+  currentSong.value && 'transpose' in currentSong.value ? currentSong.value.transpose || 0 : 0
+)
+
+function formatTranspose(n: number) {
+  return n > 0 ? `+${n}` : `${n}`
+}
+
+// base rapid clicks on the last written value, not the (async) snapshot
+let transposeTarget: number | null = null
+watch(currentSong, () => (transposeTarget = null))
+
+function changeTranspose(delta: number) {
+  const song = currentSong.value
+  if (!song || !('id' in song) || !song.id) return
+  transposeTarget = Math.max(-11, Math.min(11, (transposeTarget ?? transpose.value) + delta))
+  updateDoc(doc(songCollection, song.id), { transpose: transposeTarget })
+}
+
+function updateLyrics(lyrics: string) {
+  const song = currentSong.value
+  if (!song || !('id' in song) || !song.id) return
+  updateDoc(doc(songCollection, song.id), { lyrics })
+}
 </script>
 
 <template>
@@ -450,6 +478,10 @@ function formatDuration(duration?: number) {
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(currentSong.duration) }}
       </span>
+      <v-chip v-if="props.mode == 'chords' && !props.annotatable && transpose" class="ms-2" size="small" color="primary">
+        <v-icon start size="x-small" icon="fas fa-music" />
+        {{ formatTranspose(transpose) }}
+      </v-chip>
       <v-btn
         v-if="currentSong?.lyrics && props.mode != 'lyrics'"
         class="ms-2"
@@ -470,6 +502,24 @@ function formatDuration(duration?: number) {
         @click="startAnnotating"
       />
       <template v-if="showLyrics">
+        <template v-if="props.annotatable && props.mode == 'chords' && !shallShowLyrics && currentSong?.lyrics">
+          <v-btn
+            class="ms-2"
+            variant="tonal"
+            density="compact"
+            icon="fas fa-arrow-down"
+            :disabled="transpose <= -11"
+            @click="changeTranspose(-1)"
+          />
+          <span class="mx-2">{{ formatTranspose(transpose) }}</span>
+          <v-btn
+            variant="tonal"
+            density="compact"
+            icon="fas fa-arrow-up"
+            :disabled="transpose >= 11"
+            @click="changeTranspose(1)"
+          />
+        </template>
         <v-btn
           class="ms-2"
           variant="tonal"
@@ -554,6 +604,9 @@ function formatDuration(duration?: number) {
             :lyrics="currentSong.lyrics"
             :mode="shallShowLyrics ? 'lyrics' : props.mode"
             :fontSize="fontSize"
+            :transpose="props.mode == 'chords' ? transpose : 0"
+            :editable="props.annotatable && props.mode == 'chords' && !shallShowLyrics"
+            @update:lyrics="updateLyrics"
           />
           <div v-else class="text-grey">No lyrics yet</div>
         </div>
