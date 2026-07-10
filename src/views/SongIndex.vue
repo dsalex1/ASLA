@@ -25,6 +25,11 @@ const { recentSearches, addSearch, removeSearch, clearSearches } = useRecentSear
 const editDialogOpen = ref(false)
 const selectedSong = ref<Song | null>(null)
 
+// only the 5 most recently touched setlists as filter chips ("All" is prepended in the template)
+const recentSetlists = computed(() =>
+  [...setlists.value].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 5)
+)
+
 const filteredSongs = computed(() => {
   if (!setlistFilter.value) return songs.value
   const setlist = setlists.value.find((s) => s.id === setlistFilter.value)
@@ -68,7 +73,7 @@ function editSong(song: Song) {
     <!-- Filter chips -->
     <div class="mb-2 d-flex flex-wrap align-center gap-2">
       <v-chip
-        v-for="setlist in [{ name: 'All', id: null }, ...setlists]"
+        v-for="setlist in [{ name: 'All', id: null }, ...recentSetlists]"
         :key="setlist.id || 'null'"
         :color="setlistFilter === setlist.id ? 'primary' : ''"
         :variant="setlistFilter === setlist.id ? 'flat' : 'tonal'"
