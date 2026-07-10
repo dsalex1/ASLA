@@ -50,7 +50,8 @@ export async function fetchUltimateGuitarTab(url: string): Promise<UgTab> {
     const bpm = md.match(/(\d{2,3})\s*bpm/i);
     const key = md.match(/Key[:\s]+([A-G][b#]?m?)\b/);
     return {
-        lyrics: block.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim(),
+        // trailing "X": the reader renders UG's chord-diagram close button into the code block
+        lyrics: block.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim().replace(/\nX$/, ''),
         bpm: bpm ? parseInt(bpm[1]) : undefined,
         key_signature: key ? (key[1] as Song['key_signature']) : undefined,
     };
