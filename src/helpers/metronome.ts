@@ -1,45 +1,44 @@
-// Drift-free metronome using the Web Audio clock.
-// Clicks are scheduled ahead on AudioContext.currentTime, so even if the main
-// thread hangs for a moment the beats stay aligned to the audio hardware clock.
-// (Chris Wilson, "A Tale of Two Clocks".)
+// Metronome as a self-looping one-beat AudioBuffer: the audio hardware repeats
+// the click sample-accurately with no JS timers involved. iOS freezes timers in
+// backgrounded PWAs, which killed the previous lookahead scheduler; a looping
+// buffer keeps playing. audioSession type 'playback' (iOS 16.4+) marks it as
+// media so it survives backgrounding/screen lock and the mute switch.
 export function createMetronome(getBpm: () => number) {
   let ctx: AudioContext | null = null
-  let nextNoteTime = 0 // audio-clock time of the next click
-  let timer: ReturnType<typeof setTimeout> | null = null
-  const lookahead = 0.1 // schedule clicks this many seconds ahead
-  const tick = 25 // scheduler wake-up interval (ms)
+  let source: AudioBufferSourceNode | null = null
 
-  function scheduleClick(time: number) {
-    const osc = ctx!.createOscillator()
-    const gain = ctx!.createGain()
-    osc.frequency.value = 1000
-    gain.gain.setValueAtTime(1, time)
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.03)
-    osc.connect(gain).connect(ctx!.destination)
-    osc.start(time)
-    osc.stop(time + 0.03)
+  function beatBuffer(c: AudioContext) {
+    const sr = c.sampleRate
+    const buf = c.createBuffer(1, Math.max(1, Math.round((sr * 60) / getBpm())), sr)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < sr * 0.03; i++) data[i] = Math.sin((2 * Math.PI * 1000 * i) / sr) * Math.exp(-i / (sr * 0.008))
+    return buf
   }
 
-  function scheduler() {
-    const secondsPerBeat = 60 / getBpm()
-    while (nextNoteTime < ctx!.currentTime + lookahead) {
-      scheduleClick(nextNoteTime)
-      nextNoteTime += secondsPerBeat
-    }
-    timer = setTimeout(scheduler, tick)
+  // iOS suspends the context on lock/background despite the playback session on
+  // older versions; kick it back when we return
+  const onVisible = () => {
+    if (ctx && document.visibilityState === 'visible' && ctx.state !== 'running') ctx.resume()
   }
 
   function start() {
     if (ctx) return
+    const audioSession = (navigator as { audioSession?: { type: string } }).audioSession
+    if (audioSession) audioSession.type = 'playback'
     ctx = new AudioContext()
-    nextNoteTime = ctx.currentTime + 0.1
-    scheduler()
+    source = ctx.createBufferSource()
+    source.buffer = beatBuffer(ctx)
+    source.loop = true
+    source.connect(ctx.destination)
+    source.start()
+    document.addEventListener('visibilitychange', onVisible)
   }
 
   function stop() {
-    if (timer) clearTimeout(timer)
-    timer = null
+    document.removeEventListener('visibilitychange', onVisible)
+    source?.stop()
     ctx?.close()
+    source = null
     ctx = null
   }
 

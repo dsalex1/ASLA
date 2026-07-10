@@ -37,10 +37,10 @@ export const flatTree = <Tree extends { children?: Tree[] }>(tree: Tree[]): Pret
   }, [] as Omit<Tree, 'children'>[])
 }
 
-export const getSongInformation = (song: Song) =>
+export const getSongInformation = (song: Song, includeBpm = true) =>
   [
     song?.key_signature,
-    song?.bpm && `${song?.bpm} bpm`,
+    includeBpm && song?.bpm && `${song?.bpm} bpm`,
     song?.ibi_instrument && `Ibi <b>${song?.ibi_instrument}</b>`,
     song.nadine_moderation && '💬',
   ]

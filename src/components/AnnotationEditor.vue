@@ -8,6 +8,8 @@ const props = defineProps<{
   page: number // 1-based
   pages: PageAnnotations[] // mutated in place when drawing/erasing
   displayHeight: number
+  boxWidth: number // available screen area — the editor fills it so zooming can too
+  boxHeight: number
   tool: 'pen' | 'eraser'
   gray: number
   strokeWidth: number
@@ -20,7 +22,9 @@ const bgCanvas = ref<HTMLCanvasElement | null>(null)
 const inkCanvas = ref<HTMLCanvasElement | null>(null)
 
 const pageData = computed(() => props.pages[props.page - 1])
-const scale = computed(() => props.displayHeight / (pageData.value?.height || 842))
+// page height at zoom 1: the requested display height, capped to what actually fits the box
+const pageHeight = computed(() => Math.min(props.displayHeight, props.boxHeight || props.displayHeight))
+const scale = computed(() => pageHeight.value / (pageData.value?.height || 842))
 const cssWidth = computed(() => (pageData.value?.width || 595) * scale.value)
 const dpr = window.devicePixelRatio || 1
 
@@ -30,10 +34,16 @@ const tx = ref(0)
 const ty = ref(0)
 const renderZoom = ref(1) // canvas resolution multiplier, updated when a gesture ends
 
+// per axis: center the page while it fits the box, otherwise clamp panning to its edges
+function clampAxis(t: number, content: number, box: number) {
+  const scaled = content * zoom.value
+  return scaled <= box ? (box - scaled) / 2 : Math.min(0, Math.max(box - scaled, t))
+}
+
 function clampTransform() {
   zoom.value = Math.min(8, Math.max(1, zoom.value))
-  tx.value = Math.min(0, Math.max(cssWidth.value * (1 - zoom.value), tx.value))
-  ty.value = Math.min(0, Math.max(props.displayHeight * (1 - zoom.value), ty.value))
+  tx.value = clampAxis(tx.value, cssWidth.value, props.boxWidth)
+  ty.value = clampAxis(ty.value, pageHeight.value, props.boxHeight)
 }
 
 // zoom towards a point given in the outer (untransformed) frame
@@ -57,13 +67,13 @@ function onWheel(e: WheelEvent) {
 }
 
 watch(
-  () => props.page,
+  [() => props.page, cssWidth, () => props.boxWidth, () => props.boxHeight],
   () => {
     zoom.value = 1
-    tx.value = 0
-    ty.value = 0
     renderZoom.value = 1
-  }
+    clampTransform() // centers the page in the box
+  },
+  { immediate: true }
 )
 
 // --- pdf background ---
@@ -107,7 +117,7 @@ function drawStrokes() {
   if (!canvas || !pageData.value) return
   const s = scale.value * dpr * renderZoom.value
   canvas.width = cssWidth.value * dpr * renderZoom.value
-  canvas.height = props.displayHeight * dpr * renderZoom.value
+  canvas.height = pageHeight.value * dpr * renderZoom.value
   const ctx = canvas.getContext('2d')!
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
@@ -237,12 +247,16 @@ function onPointerUp(e: PointerEvent) {
   <div
     ref="root"
     class="annotation-editor"
-    :style="{ height: displayHeight + 'px', width: cssWidth + 'px' }"
+    :style="{ height: boxHeight + 'px', width: boxWidth + 'px' }"
     @wheel.prevent="onWheel"
   >
     <div
       class="annotation-transform"
-      :style="{ transform: `translate(${tx}px, ${ty}px) scale(${zoom})` }"
+      :style="{
+        transform: `translate(${tx}px, ${ty}px) scale(${zoom})`,
+        width: cssWidth + 'px',
+        height: pageHeight + 'px',
+      }"
     >
       <canvas ref="bgCanvas" />
       <canvas
@@ -261,14 +275,15 @@ function onPointerUp(e: PointerEvent) {
 .annotation-editor {
   position: relative;
   overflow: hidden;
-  background: white;
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
   touch-action: none;
 }
 .annotation-transform {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   transform-origin: 0 0;
+  background: white;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
 }
 .annotation-transform canvas {
   position: absolute;

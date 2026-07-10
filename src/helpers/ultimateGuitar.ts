@@ -26,7 +26,9 @@ export async function searchUltimateGuitar(query: string): Promise<UgSearch> {
         const clean = text.replace(/\*\*/g, '').trim();
         if (url.includes('/artist/')) {
             artist = clean;
-        } else if (/-chords-\d+$/.test(url)) {
+        } else if (/(?:-chords-|\/tab\/)\d+$/.test(url)) {
+            // matches both slug URLs (…/junge-chords-4585979) and the bare
+            // numeric ones UG uses for some tabs (…/tab/751634)
             // vote count follows the link, e.g. ")*\n\n10,793\n\nChords"
             const votes = md.slice(match.index! + full.length, match.index! + full.length + 40).match(/([\d,]+)\s+Chords/);
             results.push({ title: clean, artist, url, votes: votes ? parseInt(votes[1].replace(/,/g, '')) : undefined });
@@ -48,7 +50,8 @@ export async function fetchUltimateGuitarTab(url: string): Promise<UgTab> {
     const bpm = md.match(/(\d{2,3})\s*bpm/i);
     const key = md.match(/Key[:\s]+([A-G][b#]?m?)\b/);
     return {
-        lyrics: block.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim(),
+        // trailing "X": the reader renders UG's chord-diagram close button into the code block
+        lyrics: block.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim().replace(/\nX$/, ''),
         bpm: bpm ? parseInt(bpm[1]) : undefined,
         key_signature: key ? (key[1] as Song['key_signature']) : undefined,
     };
