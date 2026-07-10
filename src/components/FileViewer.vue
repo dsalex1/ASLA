@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import AnnotationEditor from '@/components/AnnotationEditor.vue'
 import LyricsViewer from '@/components/LyricsViewer.vue'
+import SongEdit from '@/components/SongEdit.vue'
 import { flatTree, getSongInformation, mapTree } from '@/helpers'
 import { createMetronome } from '@/helpers/metronome'
 import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
 import { songCollection } from '@/plugins/firebase'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { CustomSetlistEntry, Song } from '@/types'
-import { useSwipe, useWindowSize } from '@vueuse/core'
+import { useElementSize, useEventListener, useSwipe, useWindowSize } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import VuePdfEmbed from 'vue-pdf-embed'
 import { VBtn } from 'vuetify/components'
 
@@ -186,10 +188,20 @@ function redoAnnot() {
   annot.value!.undoStack.push(op)
 }
 
-function stopAnnotating() {
-  if (annot.value?.dirty && !confirm('Discard unsaved annotations?')) return
-  annot.value = null
+function confirmDiscard() {
+  return !annot.value?.dirty || confirm('Discard unsaved annotations?')
 }
+
+function stopAnnotating() {
+  if (confirmDiscard()) annot.value = null
+}
+
+// guard every way out of drawing mode with unsaved changes: in-app navigation
+// (browser/hardware back included, vue-router intercepts it) and tab close/reload
+onBeforeRouteLeave(confirmDiscard)
+useEventListener(window, 'beforeunload', (e) => {
+  if (annot.value?.dirty) e.preventDefault()
+})
 
 async function saveAnnotations() {
   const a = annot.value
@@ -231,6 +243,7 @@ async function saveAnnotations() {
 }
 
 const swipeTarget = ref<HTMLDivElement | null>(null)
+const { width: boxWidth, height: boxHeight } = useElementSize(swipeTarget)
 useSwipe(swipeTarget, {
   onSwipeEnd(_, direction) {
     if (direction === 'left') next()
@@ -293,6 +306,13 @@ function scrollLyricsToBottom(duration: number, offset = 0) {
 }
 
 const currentSong = computed(() => props.songs[currentFileIndex.value])
+
+// --- quick edit of the current song ---
+const editDialogOpen = ref(false)
+const editableSong = computed(() =>
+  currentSong.value && 'id' in currentSong.value && currentSong.value.id ? (currentSong.value as Song) : undefined
+)
+const emit = defineEmits<{ (e: 'songDeleted'): void }>()
 
 // --- Drummer click (metronome) ---
 const currentBpm = computed(() =>
@@ -366,6 +386,13 @@ function updateLyrics(lyrics: string) {
       <div>
         <slot></slot>
       </div>
+      <v-btn
+        v-if="editableSong"
+        icon="fas fa-pen"
+        size="small"
+        variant="text"
+        @click="editDialogOpen = true"
+      />
       <div class="d-flex ms-4" style="overflow-x: scroll; flex: 1">
         <v-btn
           ref="navButtons"
@@ -494,9 +521,9 @@ function updateLyrics(lyrics: string) {
 
     <!-- song infos-->
     <div class="w-100 text-center" v-if="!annot && currentSong && 'name' in currentSong">
-      <span v-html="getSongInformation(currentSong)" />
+      <span v-html="getSongInformation(currentSong, false)" />
       <span v-if="currentSong?.duration">
-        -
+        <template v-if="getSongInformation(currentSong, false)">-</template>
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(currentSong.duration) }}
       </span>
@@ -524,8 +551,10 @@ function updateLyrics(lyrics: string) {
         @click="startAnnotating"
       />
       <v-btn
-        v-if="props.mode == 'drums' && currentBpm"
+        v-if="currentBpm"
         class="ms-2"
+        :class="{ 'bpm-blink': clicking }"
+        :style="clicking ? { animationDuration: 60 / currentBpm + 's' } : {}"
         variant="tonal"
         density="compact"
         :color="clicking ? 'primary' : undefined"
@@ -607,6 +636,8 @@ function updateLyrics(lyrics: string) {
         :pages="annot.pages"
         :page="currentFilePage"
         :displayHeight="pdfHeight"
+        :boxWidth="boxWidth"
+        :boxHeight="boxHeight"
         :tool="annotTool"
         :gray="annotGray"
         :strokeWidth="annotWidth"
@@ -644,7 +675,7 @@ function updateLyrics(lyrics: string) {
           <div v-else class="text-grey">No lyrics yet</div>
         </div>
       </div>
-      <div v-if="'title' in currentSong" style="width: 0px">
+      <div v-if="currentSong && 'title' in currentSong" style="width: 0px">
         <div class="text-center text-h4" style="min-width: 100px; width: 50dvw; transform: translateX(-50%)">
           {{ currentSong.title }}
           <br />
@@ -679,6 +710,15 @@ function updateLyrics(lyrics: string) {
         </template>
       </div>
     </div>
+
+    <v-dialog v-model="editDialogOpen" max-width="800px" scrollable>
+      <SongEdit
+        v-if="editableSong"
+        :song="editableSong"
+        @close="editDialogOpen = false"
+        @deleted=";((editDialogOpen = false), emit('songDeleted'))"
+      />
+    </v-dialog>
   </div>
 </template>
 
@@ -686,5 +726,17 @@ function updateLyrics(lyrics: string) {
 .vue-pdf-embed__page {
   display: flex;
   justify-content: center;
+}
+@keyframes bpm-blink {
+  0% {
+    opacity: 0.3;
+  }
+  40%,
+  100% {
+    opacity: 1;
+  }
+}
+.bpm-blink {
+  animation: bpm-blink 0.5s infinite;
 }
 </style>

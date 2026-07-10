@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { fetchLyricsOvh, OvhResult, searchLyricsOvh } from '@/helpers/lyricsOvh'
 import { fetchUltimateGuitarTab, searchUltimateGuitar, UgSearchResult } from '@/helpers/ultimateGuitar'
 import { Song } from '@/types'
 import { ref } from 'vue'
@@ -21,7 +22,7 @@ const emit = defineEmits<{
 const loading = ref(false)
 const importingUrl = ref('')
 const error = ref('')
-const results = ref<UgSearchResult[] | null>(null)
+const results = ref<(UgSearchResult | OvhResult)[] | null>(null)
 let searchDuration: number | undefined
 
 async function search() {
@@ -32,7 +33,11 @@ async function search() {
     const res = await searchUltimateGuitar(props.query)
     results.value = res.results
     searchDuration = res.duration
-    if (!res.results.length) error.value = 'No results found'
+    if (!res.results.length) {
+      // no tabs on UG: fall back to a plain-lyrics search
+      results.value = await searchLyricsOvh(props.query)
+      if (!results.value.length) error.value = 'No results found'
+    }
   } catch (e) {
     console.error('Ultimate Guitar search failed:', e)
     error.value = 'Search failed'
@@ -41,22 +46,32 @@ async function search() {
   }
 }
 
-async function pick(result: UgSearchResult) {
+const resultKey = (result: UgSearchResult | OvhResult) =>
+  'url' in result ? result.url : `${result.artist}|${result.title}`
+
+async function pick(result: UgSearchResult | OvhResult) {
   if (importingUrl.value) return
-  importingUrl.value = result.url
+  importingUrl.value = resultKey(result)
   error.value = ''
   try {
-    const tab = await fetchUltimateGuitarTab(result.url)
-    if (!tab.lyrics) throw new Error('No tab content found')
-    emit('import', {
-      lyrics: tab.lyrics,
-      bpm: tab.bpm,
-      duration: searchDuration,
-      key_signature: tab.key_signature,
-    })
+    if ('url' in result) {
+      const tab = await fetchUltimateGuitarTab(result.url)
+      if (!tab.lyrics) throw new Error('No tab content found')
+      emit('import', {
+        lyrics: tab.lyrics,
+        bpm: tab.bpm,
+        duration: searchDuration,
+        key_signature: tab.key_signature,
+      })
+    } else {
+      emit('import', {
+        lyrics: await fetchLyricsOvh(result.artist, result.title),
+        duration: result.duration,
+      })
+    }
     results.value = null
   } catch (e) {
-    console.error('Ultimate Guitar import failed:', e)
+    console.error('Lyrics import failed:', e)
     error.value = 'Import failed'
   } finally {
     importingUrl.value = ''
@@ -86,13 +101,19 @@ async function pick(result: UgSearchResult) {
     >
       <v-list-item
         v-for="result in results"
-        :key="result.url"
+        :key="resultKey(result)"
         :title="result.title"
-        :subtitle="result.votes ? `${result.artist} · ${result.votes.toLocaleString()} votes` : result.artist"
+        :subtitle="
+          'url' in result
+            ? result.votes
+              ? `${result.artist} · ${result.votes.toLocaleString()} votes`
+              : result.artist
+            : `${result.artist} · lyrics only`
+        "
         @click="pick(result)"
       >
         <template #append>
-          <v-progress-circular v-if="importingUrl === result.url" indeterminate size="20" />
+          <v-progress-circular v-if="importingUrl === resultKey(result)" indeterminate size="20" />
         </template>
       </v-list-item>
     </v-list>

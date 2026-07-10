@@ -225,8 +225,8 @@ async function deleteSong(song: Song) {
 <template>
   <v-card>
     <v-card-title class="d-flex justify-space-between align-center">
-      <span>Edit Song - {{ song.name || song.filename }}</span>
-      <v-btn icon="fas fa-times" variant="text" @click="emit('close')" />
+      <span class="text-truncate" style="min-width: 0">Edit Song - {{ song.name || song.filename }}</span>
+      <v-btn class="flex-shrink-0" icon="fas fa-times" variant="text" @click="emit('close')" />
     </v-card-title>
     <v-card-text>
       <v-text-field

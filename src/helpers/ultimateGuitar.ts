@@ -26,7 +26,9 @@ export async function searchUltimateGuitar(query: string): Promise<UgSearch> {
         const clean = text.replace(/\*\*/g, '').trim();
         if (url.includes('/artist/')) {
             artist = clean;
-        } else if (/-chords-\d+$/.test(url)) {
+        } else if (/(?:-chords-|\/tab\/)\d+$/.test(url)) {
+            // matches both slug URLs (…/junge-chords-4585979) and the bare
+            // numeric ones UG uses for some tabs (…/tab/751634)
             // vote count follows the link, e.g. ")*\n\n10,793\n\nChords"
             const votes = md.slice(match.index! + full.length, match.index! + full.length + 40).match(/([\d,]+)\s+Chords/);
             results.push({ title: clean, artist, url, votes: votes ? parseInt(votes[1].replace(/,/g, '')) : undefined });
