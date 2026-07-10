@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { fetchLyricsOvh, OvhResult, searchLyricsOvh } from '@/helpers/lyricsOvh'
+import { LyricsFallbackResult, searchLyricsFallback } from '@/helpers/lyricsFallback'
 import { fetchUltimateGuitarTab, searchUltimateGuitar, UgSearchResult } from '@/helpers/ultimateGuitar'
 import { Song } from '@/types'
 import { ref } from 'vue'
@@ -22,7 +22,7 @@ const emit = defineEmits<{
 const loading = ref(false)
 const importingUrl = ref('')
 const error = ref('')
-const results = ref<(UgSearchResult | OvhResult)[] | null>(null)
+const results = ref<(UgSearchResult | LyricsFallbackResult)[] | null>(null)
 let searchDuration: number | undefined
 
 async function search() {
@@ -35,7 +35,7 @@ async function search() {
     searchDuration = res.duration
     if (!res.results.length) {
       // no tabs on UG: fall back to a plain-lyrics search
-      results.value = await searchLyricsOvh(props.query)
+      results.value = await searchLyricsFallback(props.query)
       if (!results.value.length) error.value = 'No results found'
     }
   } catch (e) {
@@ -46,10 +46,10 @@ async function search() {
   }
 }
 
-const resultKey = (result: UgSearchResult | OvhResult) =>
+const resultKey = (result: UgSearchResult | LyricsFallbackResult) =>
   'url' in result ? result.url : `${result.artist}|${result.title}`
 
-async function pick(result: UgSearchResult | OvhResult) {
+async function pick(result: UgSearchResult | LyricsFallbackResult) {
   if (importingUrl.value) return
   importingUrl.value = resultKey(result)
   error.value = ''
@@ -64,10 +64,8 @@ async function pick(result: UgSearchResult | OvhResult) {
         key_signature: tab.key_signature,
       })
     } else {
-      emit('import', {
-        lyrics: await fetchLyricsOvh(result.artist, result.title),
-        duration: result.duration,
-      })
+      // lrclib results carry their lyrics already — nothing left to fetch/fail
+      emit('import', { lyrics: result.lyrics, duration: result.duration })
     }
     results.value = null
   } catch (e) {
@@ -82,6 +80,7 @@ async function pick(result: UgSearchResult | OvhResult) {
 <template>
   <div>
     <v-btn
+      block
       variant="tonal"
       color="primary"
       prepend-icon="fas fa-cloud-arrow-down"

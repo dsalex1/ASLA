@@ -184,7 +184,7 @@ function editSong(song: Song) {
       <template #item.actions="{ item }">
         <div class="d-flex gap-1">
           <v-btn
-            v-if="item.filename || item.pdfStorageRef"
+            v-if="item.filename || item.pdfStorageRef || lyricsHasChords(item.lyrics)"
             size="small"
             color="primary"
             variant="tonal"
@@ -256,7 +256,7 @@ function editSong(song: Song) {
 
           <div class="d-flex gap-2 flex-wrap">
             <v-btn
-              v-if="song.filename || song.pdfStorageRef"
+              v-if="song.filename || song.pdfStorageRef || lyricsHasChords(song.lyrics)"
               size="small"
               color="primary"
               variant="tonal"
