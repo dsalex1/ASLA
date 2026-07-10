@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
 import SongListItem from '@/components/SongListItem.vue'
@@ -14,6 +14,7 @@ import { CustomSetlistEntry } from '@/types'
 const props = defineProps<{
   files: Treelike<{ name: string }>
   modelValue: (string | CustomSetlistEntry)[]
+  openAll?: boolean
 }>()
 const emit = defineEmits(['update:modelValue'])
 
@@ -25,10 +26,34 @@ function onInsert(event: any) {
 
 const mappedTree = computed(() => mapTree(props.files, (e) => ({ title: e.name })))
 
+// titles of non-leaf nodes (directories/folders) — those only expand, they are not selectable songs
+const folderTitles = computed(() => {
+  const titles = new Set<string>()
+  const walk = (nodes: Treelike<{ title: string }>) =>
+    nodes.forEach((n) => {
+      if (n.children) {
+        titles.add(n.title)
+        walk(n.children)
+      }
+    })
+  walk(mappedTree.value)
+  return titles
+})
+
 const searchQuery = ref('')
 
+// controlled expansion — open-all is unreliable with async-loaded items. Both dependencies
+// are read unconditionally: an empty search result resets `opened` via v-model, so clearing
+// the search must re-trigger this effect to re-expand.
+const opened = ref<string[]>([])
+watchEffect(() => {
+  const searching = !!(searchQuery.value || '').trim()
+  const titles = [...folderTitles.value]
+  if (props.openAll || searching) opened.value = titles
+})
+
 const filteredTree = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
+  const query = (searchQuery.value || '').trim().toLowerCase()
   return filterTree(
     mappedTree.value,
     (e) => !selectedFiles.value.includes(e.title) && (!query || e.title.toLowerCase().includes(query))
@@ -107,12 +132,18 @@ function getSongByFilename(filename: string) {
       />
       <v-treeview
         :items="filteredTree"
-        :open-all="!!searchQuery"
+        v-model:opened="opened"
+        item-value="title"
         density="compact"
         class="disable-active-underlay"
       >
         <template v-slot:item="{ props }">
-          <drag :data="props.title" class="item" :key="props.title" handle=".drag-handle">
+          <v-treeview-item
+            v-if="folderTitles.has(props.title)"
+            :title="props.title"
+            prepend-icon="fas fa-folder"
+          />
+          <drag v-else :data="props.title" class="item" :key="props.title" handle=".drag-handle">
             <v-treeview-item
               :title="props.title"
               @click="selectedFiles.push(props.title)"

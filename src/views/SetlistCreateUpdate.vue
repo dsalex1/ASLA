@@ -7,10 +7,10 @@ import { HOME_ROUTE } from '@/router'
 
 import { ref as firebaseRef, getStorage, uploadBytes } from 'firebase/storage'
 
-import { setlistCollection, songCollection, withoutFields } from '@/plugins/firebase'
+import { folderCollection, setlistCollection, songCollection, withoutFields } from '@/plugins/firebase'
 import { CustomSetlistEntry, Setlist } from '@/types'
 import { addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { flatTree } from '@/helpers'
 import { useRoute, useRouter } from 'vue-router'
@@ -165,6 +165,25 @@ async function uploadFile(fileHandle: FileSystemFileHandle, fileData?: File) {
   return fileRef
 }
 const songs = useCollection(songCollection)
+const folders = useCollection(folderCollection)
+
+// folder tree for the picker when no local sheet directory is selected:
+// folders (alphabetical) with their songs (alphabetical), then loose songs (alphabetical)
+const folderTree = computed(() => {
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
+  const songsIn = (folderId: string | null) =>
+    songs.value
+      .filter((s) => (s.folderId ?? null) === folderId)
+      .map((s) => ({ name: s.filename }))
+      .sort(byName)
+  return [
+    ...[...folders.value]
+      .sort(byName)
+      .map((f) => ({ name: f.name, children: songsIn(f.id!) }))
+      .filter((f) => f.children.length > 0),
+    ...songsIn(null),
+  ]
+})
 </script>
 
 <template>
@@ -182,10 +201,7 @@ const songs = useCollection(songCollection)
       </div>
     </h2>
     <v-text-field v-model="setlist.name" label="Name" />
-    <FileSelector
-      v-model="currentSongs"
-      :files="pdfTree.length > 0 ? pdfTree : songs.map((s) => ({ name: s.filename }))"
-    />
+    <FileSelector v-model="currentSongs" :files="pdfTree.length > 0 ? pdfTree : folderTree" :open-all="pdfTree.length === 0" />
   </AppLayout>
 </template>
 

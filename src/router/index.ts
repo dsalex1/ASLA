@@ -39,6 +39,10 @@ const router = createRouter({
       component: () => import('@/views/SongIndex.vue'),
     },
     {
+      path: '/folders',
+      component: () => import('@/views/FolderIndex.vue'),
+    },
+    {
       path: '/song/:id',
       component: () => import('@/views/SongView.vue'),
     },
