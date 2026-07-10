@@ -67,7 +67,10 @@ function editSong(song: Song) {
         <Backbutton :to="HOME_ROUTE" />
         Songs
       </div>
-      <SongCreate />
+      <div class="d-flex ga-2">
+        <v-btn to="/folders" color="primary" variant="tonal" prepend-icon="fas fa-folder">Folders</v-btn>
+        <SongCreate />
+      </div>
     </h2>
 
     <!-- Filter chips -->

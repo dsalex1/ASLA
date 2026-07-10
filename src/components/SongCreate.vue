@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /** basically auto generated from claude 4 sonnet */
 import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
-import { songCollection } from '@/plugins/firebase'
+import { folderCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { addDoc } from 'firebase/firestore'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useCollection } from 'vuefire'
 
 const dialog = ref(false)
 const loading = ref(false)
@@ -29,7 +30,13 @@ const formData = ref<
   bpm: undefined,
   duration: undefined,
   ibi_instrument: undefined,
+  folderId: undefined,
 })
+
+const folders = useCollection(folderCollection)
+const folderItems = computed(() =>
+  [...folders.value].sort((a, b) => a.name.localeCompare(b.name)).map((f) => ({ title: f.name, value: f.id }))
+)
 
 // Auto-generate filename based on name
 function generateFilename(name: string): string {
@@ -59,6 +66,7 @@ async function createSong() {
       bpm: formData.value.bpm,
       duration: formData.value.duration,
       ibi_instrument: formData.value.ibi_instrument,
+      folderId: formData.value.folderId ?? undefined,
       lyrics: importedLyrics.value,
     }
 
@@ -71,6 +79,7 @@ async function createSong() {
       bpm: undefined,
       duration: undefined,
       ibi_instrument: undefined,
+      folderId: undefined,
     }
     importedLyrics.value = undefined
 
@@ -90,6 +99,7 @@ function resetForm() {
     bpm: undefined,
     duration: undefined,
     ibi_instrument: undefined,
+    folderId: undefined,
   }
   importedLyrics.value = undefined
   error.value = ''
@@ -173,6 +183,19 @@ function resetForm() {
                   v-model="formData.ibi_instrument"
                   :items="['Bass', 'A.Git', 'E.Git']"
                   label="Ibi Instrument"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  density="compact"
+                />
+              </v-col>
+
+              <v-col cols="12" sm="6">
+                <v-select
+                  v-model="formData.folderId"
+                  :items="folderItems"
+                  label="Folder"
+                  placeholder="No folder"
                   variant="outlined"
                   hide-details
                   clearable

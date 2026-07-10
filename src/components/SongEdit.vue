@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
 import { lyricsHasChords } from '@/helpers/lyrics'
-import { setlistCollection, songCollection } from '@/plugins/firebase'
+import { folderCollection, setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { arrayRemove, deleteDoc, doc, getDocs, query, updateDoc, where } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useCollection } from 'vuefire'
 
 defineProps<{
   song: Song
@@ -18,6 +19,11 @@ const emit = defineEmits<{
 }>()
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+const folders = useCollection(folderCollection)
+const folderItems = computed(() =>
+  [...folders.value].sort((a, b) => a.name.localeCompare(b.name)).map((f) => ({ title: f.name, value: f.id }))
+)
 
 function applyImport(song: Song, data: UgImportData) {
   if (song.lyrics && !confirm('Overwrite existing lyrics?')) return
@@ -313,6 +319,18 @@ async function deleteSong(song: Song) {
         label="Ibi Instrument"
         variant="outlined"
         density="comfortable"
+        class="mb-3"
+      />
+
+      <v-select
+        v-model="song.folderId"
+        :items="folderItems"
+        @update:model-value="saveSong(song)"
+        label="Folder"
+        placeholder="No folder"
+        variant="outlined"
+        density="comfortable"
+        clearable
         class="mb-3"
       />
 

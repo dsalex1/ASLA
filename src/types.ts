@@ -16,6 +16,11 @@ export type CustomSetlistEntry = {
   description: string
 }
 
+export type Folder = {
+  id?: string
+  name: string
+}
+
 export type Song = {
   id?: string
   filename: string
@@ -32,4 +37,5 @@ export type Song = {
   duration?: number
   lyrics?: string
   transpose?: number // semitones (-11..11) applied to chords in the lyrics chord view
+  folderId?: string | null // null/absent = no folder
 }

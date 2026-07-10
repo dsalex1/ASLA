@@ -14,6 +14,7 @@ import { CustomSetlistEntry } from '@/types'
 const props = defineProps<{
   files: Treelike<{ name: string }>
   modelValue: (string | CustomSetlistEntry)[]
+  openAll?: boolean
 }>()
 const emit = defineEmits(['update:modelValue'])
 
@@ -24,6 +25,20 @@ function onInsert(event: any) {
 }
 
 const mappedTree = computed(() => mapTree(props.files, (e) => ({ title: e.name })))
+
+// titles of non-leaf nodes (directories/folders) — those only expand, they are not selectable songs
+const folderTitles = computed(() => {
+  const titles = new Set<string>()
+  const walk = (nodes: Treelike<{ title: string }>) =>
+    nodes.forEach((n) => {
+      if (n.children) {
+        titles.add(n.title)
+        walk(n.children)
+      }
+    })
+  walk(mappedTree.value)
+  return titles
+})
 
 const searchQuery = ref('')
 
@@ -107,12 +122,17 @@ function getSongByFilename(filename: string) {
       />
       <v-treeview
         :items="filteredTree"
-        :open-all="!!searchQuery"
+        :open-all="!!searchQuery || openAll"
         density="compact"
         class="disable-active-underlay"
       >
         <template v-slot:item="{ props }">
-          <drag :data="props.title" class="item" :key="props.title" handle=".drag-handle">
+          <v-treeview-item
+            v-if="folderTitles.has(props.title)"
+            :title="props.title"
+            prepend-icon="fas fa-folder"
+          />
+          <drag v-else :data="props.title" class="item" :key="props.title" handle=".drag-handle">
             <v-treeview-item
               :title="props.title"
               @click="selectedFiles.push(props.title)"
