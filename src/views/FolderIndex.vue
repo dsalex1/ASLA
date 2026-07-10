@@ -28,10 +28,10 @@ const songsIn = (folderId: string | null) =>
 const newFolderName = ref('')
 const error = ref('')
 
-function validateName(name: string): string | null {
+function validateName(name: string, excludeId?: string): string | null {
   const trimmed = name.trim()
   if (!trimmed) return null
-  if (folders.value.some((f) => f.name.toLowerCase() === trimmed.toLowerCase())) {
+  if (folders.value.some((f) => f.id !== excludeId && f.name.toLowerCase() === trimmed.toLowerCase())) {
     error.value = `A folder named "${trimmed}" already exists.`
     return null
   }
@@ -46,12 +46,22 @@ async function createFolder() {
   newFolderName.value = ''
 }
 
-async function renameFolder(folderId: string, currentName: string) {
+// inline rename (window.prompt is a silent no-op in some embedded browsers)
+const renamingId = ref<string | null>(null)
+const renameText = ref('')
+
+function startRename(folderId: string, currentName: string) {
   error.value = ''
-  const input = window.prompt('Rename folder', currentName)
-  if (input === null || input.trim() === currentName) return
-  const name = validateName(input)
-  if (!name) return
+  renamingId.value = folderId
+  renameText.value = currentName
+}
+
+async function commitRename() {
+  const folderId = renamingId.value
+  if (!folderId) return
+  renamingId.value = null
+  const name = validateName(renameText.value, folderId)
+  if (!name || name === folders.value.find((f) => f.id === folderId)?.name) return
   await updateDoc(doc(folderCollection, folderId), { name })
 }
 
@@ -107,14 +117,25 @@ async function moveSong(songId: string, folderId: string | null) {
           <template #prepend>
             <v-icon :icon="section.id ? 'fas fa-folder' : 'fas fa-folder-open'" size="small" class="me-2" />
           </template>
-          <v-list-item-title class="font-weight-medium">{{ section.name }}</v-list-item-title>
+          <v-text-field
+            v-if="section.id && renamingId === section.id"
+            v-model="renameText"
+            variant="outlined"
+            density="compact"
+            hide-details
+            autofocus
+            @keyup.enter="commitRename"
+            @keyup.esc="renamingId = null"
+            @blur="commitRename"
+          />
+          <v-list-item-title v-else class="font-weight-medium">{{ section.name }}</v-list-item-title>
           <template #append v-if="section.id">
             <v-btn
               icon="fas fa-pen"
               variant="text"
               size="x-small"
               title="Rename folder"
-              @click="renameFolder(section.id!, section.name)"
+              @click="startRename(section.id!, section.name)"
             />
             <v-btn
               icon="fas fa-trash"

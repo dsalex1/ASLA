@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { VTreeview, VTreeviewItem } from 'vuetify/labs/VTreeview'
 
 import SongListItem from '@/components/SongListItem.vue'
@@ -42,8 +42,18 @@ const folderTitles = computed(() => {
 
 const searchQuery = ref('')
 
+// controlled expansion — open-all is unreliable with async-loaded items. Both dependencies
+// are read unconditionally: an empty search result resets `opened` via v-model, so clearing
+// the search must re-trigger this effect to re-expand.
+const opened = ref<string[]>([])
+watchEffect(() => {
+  const searching = !!(searchQuery.value || '').trim()
+  const titles = [...folderTitles.value]
+  if (props.openAll || searching) opened.value = titles
+})
+
 const filteredTree = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
+  const query = (searchQuery.value || '').trim().toLowerCase()
   return filterTree(
     mappedTree.value,
     (e) => !selectedFiles.value.includes(e.title) && (!query || e.title.toLowerCase().includes(query))
@@ -122,7 +132,8 @@ function getSongByFilename(filename: string) {
       />
       <v-treeview
         :items="filteredTree"
-        :open-all="!!searchQuery || openAll"
+        v-model:opened="opened"
+        item-value="title"
         density="compact"
         class="disable-active-underlay"
       >
