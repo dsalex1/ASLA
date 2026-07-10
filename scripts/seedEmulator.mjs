@@ -35,11 +35,11 @@ async function makePdf(title, pages) {
 }
 
 try {
-  await createUserWithEmailAndPassword(auth, 'test@test.de', 'test1234')
-  console.log('created user test@test.de / test1234')
+  await createUserWithEmailAndPassword(auth, 'user@user.com', 'useruser')
+  console.log('created user user@user.com / useruser')
 } catch (e) {
   if (e.code !== 'auth/email-already-in-use') throw e
-  console.log('user test@test.de already exists')
+  console.log('user user@user.com already exists')
 }
 
 const sheetPdf = await makePdf('Test Song Sheet', 3)
