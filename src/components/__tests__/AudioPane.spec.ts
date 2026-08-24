@@ -1,4 +1,5 @@
 import AudioPane from '@/components/AudioPane.vue'
+import JogStrip from '@/components/JogStrip.vue'
 import { AudioTrack, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
@@ -45,8 +46,8 @@ const mountPane = async (tracks: AudioTrack[] = [track()]) => {
   return wrapper
 }
 
-const button = (wrapper: ReturnType<typeof mount>, icon: string) =>
-  wrapper.findAll('button').find((b) => b.find(`.fa-${icon}`).exists())!
+const button = (wrapper: ReturnType<typeof mount>, label: string) =>
+  wrapper.findAll('button').find((b) => b.attributes('aria-label') === label)!
 const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown as { markers: number[] }).markers
 
 beforeEach(() => {
@@ -74,8 +75,8 @@ describe('AudioPane track loading', () => {
   })
 
   it('offers a picker only when there is more than one track', async () => {
-    expect((await mountPane()).find('.v-select').exists()).toBe(false)
-    expect((await mountPane([track(), track({ name: 'Live' })])).find('.v-select').exists()).toBe(true)
+    expect((await mountPane()).find('select').exists()).toBe(false)
+    expect((await mountPane([track(), track({ name: 'Live' })])).find('select').exists()).toBe(true)
   })
 })
 
@@ -83,40 +84,50 @@ describe('AudioPane markers', () => {
   it('drops a marker at the playhead, keeping them sorted', async () => {
     const wrapper = await mountPane([track({ markers: [20] })])
     engine.currentTime.value = 5
-    await button(wrapper, 'flag').trigger('click')
+    await button(wrapper, 'Add marker').trigger('click')
     expect(markersOf(wrapper)).toEqual([5, 20])
   })
 
   it('removes the marker instead when the playhead is on one', async () => {
     const wrapper = await mountPane([track({ markers: [5, 20] })])
     engine.currentTime.value = 5.2
-    await button(wrapper, 'flag').trigger('click')
+    await wrapper.vm.$nextTick()
+    await button(wrapper, 'Remove marker').trigger('click')
     expect(markersOf(wrapper)).toEqual([20])
+  })
+
+  it('offers add or remove depending on where the playhead is', async () => {
+    const wrapper = await mountPane([track({ markers: [5] })])
+    expect(button(wrapper, 'Add marker')).toBeDefined()
+    engine.currentTime.value = 5.1
+    await wrapper.vm.$nextTick()
+    expect(button(wrapper, 'Remove marker')).toBeDefined()
+    expect(button(wrapper, 'Add marker')).toBeUndefined()
   })
 
   it('jumps to the previous and next marker', async () => {
     const wrapper = await mountPane([track({ markers: [5, 20] })])
     engine.currentTime.value = 12
-    await button(wrapper, 'forward-step').trigger('click')
+    await button(wrapper, 'Next marker').trigger('click')
     expect(engine.seek).toHaveBeenLastCalledWith(20)
     engine.currentTime.value = 12
-    await button(wrapper, 'backward-step').trigger('click')
+    await button(wrapper, 'Previous marker').trigger('click')
     expect(engine.seek).toHaveBeenLastCalledWith(5)
   })
 
   it('refuses to store a marker at a non-finite position', async () => {
     const wrapper = await mountPane([track({ markers: [20] })])
     engine.currentTime.value = NaN
-    await button(wrapper, 'flag').trigger('click')
+    await button(wrapper, 'Add marker').trigger('click')
     expect(markersOf(wrapper)).toEqual([20])
   })
 
   it('runs to the track ends when there is no marker that way', async () => {
     const wrapper = await mountPane([track({ markers: [] })])
     engine.currentTime.value = 12
-    await button(wrapper, 'backward-step').trigger('click')
+    await button(wrapper, 'Previous marker').trigger('click')
     expect(engine.seek).toHaveBeenLastCalledWith(0)
-    await button(wrapper, 'forward-step').trigger('click')
+    await button(wrapper, 'Next marker').trigger('click')
     expect(engine.seek).toHaveBeenLastCalledWith(100)
   })
 })
@@ -163,7 +174,7 @@ describe('AudioPane A-B repeat', () => {
     await press(wrapper, 'A')
     engine.currentTime.value = 20
     await press(wrapper, 'B')
-    await button(wrapper, 'times').trigger('click')
+    await button(wrapper, 'Clear A-B').trigger('click')
     expect([engine.loopA.value, engine.loopB.value]).toEqual([null, null])
   })
 })
@@ -171,9 +182,9 @@ describe('AudioPane A-B repeat', () => {
 describe('AudioPane transport', () => {
   it('skips ten seconds each way', async () => {
     const wrapper = await mountPane()
-    await button(wrapper, 'forward').trigger('click')
+    await button(wrapper, 'Forward 10 seconds').trigger('click')
     expect(engine.skip).toHaveBeenCalledWith(10)
-    await button(wrapper, 'backward').trigger('click')
+    await button(wrapper, 'Back 10 seconds').trigger('click')
     expect(engine.skip).toHaveBeenCalledWith(-10)
   })
 
@@ -181,7 +192,7 @@ describe('AudioPane transport', () => {
     const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: true, hasNext: true, view: 'waveform' } })
     await flushPromises()
     engine.currentTime.value = 30
-    await button(wrapper, 'backward-fast').trigger('click')
+    await button(wrapper, 'Restart or previous song').trigger('click')
     expect(engine.seek).toHaveBeenCalledWith(0)
     expect(wrapper.emitted('prevSong')).toBeUndefined()
   })
@@ -190,21 +201,37 @@ describe('AudioPane transport', () => {
     const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: true, hasNext: true, view: 'waveform' } })
     await flushPromises()
     engine.currentTime.value = 1
-    await button(wrapper, 'backward-fast').trigger('click')
+    await button(wrapper, 'Restart or previous song').trigger('click')
     expect(wrapper.emitted('prevSong')).toHaveLength(1)
   })
 
   it('only offers the next song when there is one', async () => {
-    expect(button(await mountPane(), 'forward-fast').attributes('disabled')).toBeDefined()
+    expect(button(await mountPane(), 'Next song').attributes('disabled')).toBeDefined()
   })
 
-  it('clamps tempo and pitch, and shows the resulting bpm', async () => {
+  it('steps the tempo and shows the resulting bpm', async () => {
     const wrapper = await mountPane()
-    for (let i = 0; i < 20; i++) await button(wrapper, 'plus').trigger('click')
-    expect(engine.tempo.value).toBe(1.5)
-    expect(wrapper.text()).toContain('180 bpm') // 120 bpm at 1.5x
-    for (let i = 0; i < 20; i++) await button(wrapper, 'arrow-up').trigger('click')
-    expect(engine.pitch.value).toBe(12)
+    for (let i = 0; i < 4; i++) await button(wrapper, 'Faster').trigger('click')
+    expect(engine.tempo.value).toBeCloseTo(1.2, 4)
+    expect(wrapper.text()).toContain('144 bpm') // 120 bpm at 1.2x
+  })
+
+  it('clamps tempo to 0.25x-4x and pitch to a two octave range', async () => {
+    const wrapper = await mountPane()
+    const jogs = wrapper.findAllComponents(JogStrip)
+    expect(jogs[0].props()).toMatchObject({ min: 30, max: 480, step: 1 }) // 120 bpm at 0.25x-4x
+    expect(jogs[1].props()).toMatchObject({ min: -24, max: 24, step: 0.01 })
+
+    for (let i = 0; i < 30; i++) await button(wrapper, 'Pitch up').trigger('click')
+    expect(engine.pitch.value).toBe(24)
+  })
+
+  it('falls back to a tempo multiplier when the song has no bpm', async () => {
+    const wrapper = mount(AudioPane, {
+      props: { song: { ...song([track()]), bpm: undefined }, hasPrev: false, hasNext: false, view: 'waveform' },
+    })
+    await flushPromises()
+    expect(wrapper.findAllComponents(JogStrip)[0].props()).toMatchObject({ min: 0.25, max: 4, step: 0.01 })
   })
 })
 
@@ -213,7 +240,7 @@ describe('AudioPane persistence', () => {
     vi.useFakeTimers()
     const wrapper = await mountPane([track({ markers: [20] }), track({ name: 'Live' })])
     engine.currentTime.value = 5
-    await button(wrapper, 'flag').trigger('click')
+    await button(wrapper, 'Add marker').trigger('click')
     engine.tempo.value = 0.9
     await vi.advanceTimersByTimeAsync(600)
     vi.useRealTimers()
@@ -226,7 +253,7 @@ describe('AudioPane persistence', () => {
   it('leaves a cleared A-B out of the document entirely', async () => {
     vi.useFakeTimers()
     const wrapper = await mountPane([track({ loopA: 1, loopB: 2 })])
-    await button(wrapper, 'times').trigger('click')
+    await button(wrapper, 'Clear A-B').trigger('click')
     await vi.advanceTimersByTimeAsync(600)
     vi.useRealTimers()
 

@@ -15,6 +15,8 @@ const props = withDefaults(
     position: number
     /** the compact whole-track strip: no flags to grab, tap anywhere to seek */
     overview?: boolean
+    /** the zoomed view: the wave is dragged under a fixed centre playhead */
+    draggable?: boolean
   }>(),
   { loopA: null, loopB: null }
 )
@@ -23,7 +25,7 @@ const emit = defineEmits<{
   (e: 'seek', seconds: number): void
   (e: 'moveMarker', index: number, seconds: number): void
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
-  (e: 'window', start: number, end: number): void
+  (e: 'zoom', span: number): void
 }>()
 
 const COLORS = {
@@ -32,6 +34,7 @@ const COLORS = {
   waveOverview: '#e8bd6d',
   loop: '#f59e0b',
   loopFill: 'rgba(245, 158, 11, 0.35)',
+  zeroLine: '#333',
   marker: '#4a90d9',
   playhead: '#e53935',
   handle: '#b3a086',
@@ -47,8 +50,18 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const { width, height } = useElementSize(wrapper)
 
 const span = computed(() => Math.max(props.end - props.start, 0.05))
-const xOf = (seconds: number) => ((seconds - props.start) / span.value) * width.value
-const timeOf = (x: number) => props.start + (x / Math.max(width.value, 1)) * span.value
+const secondsPerPixel = computed(() => span.value / Math.max(width.value, 1))
+
+// The wave is sampled on a grid fixed to the track, not to the canvas, so a column always
+// covers the same slice of audio however far the view has scrolled — that keeps the shape
+// frozen. The leftover sub-pixel remainder is applied as an offset when drawing, so the
+// shape slides smoothly instead of stepping from pixel to pixel.
+const gridIndex = computed(() => Math.floor(props.start / secondsPerPixel.value + 1e-9))
+const subPixel = computed(() => props.start / secondsPerPixel.value - gridIndex.value)
+const columnTime = (column: number) => (gridIndex.value + column) * secondsPerPixel.value
+
+const xOf = (seconds: number) => (seconds - props.start) / secondsPerPixel.value
+const timeOf = (x: number) => props.start + x * secondsPerPixel.value
 const clampTime = (t: number) => Math.max(0, Math.min(t, props.duration))
 
 /** loudest peak between two times, 0..1 */
@@ -103,29 +116,59 @@ function drawHandle(ctx: CanvasRenderingContext2D, x: number, label: 'A' | 'B') 
   ctx.fillText(label, left + HANDLE_W / 2, top + HANDLE_H / 2)
 }
 
-function drawWave(ctx: CanvasRenderingContext2D, color: string, from: number, to: number) {
+/**
+ * One filled silhouette rather than a row of separate bars: a solid shape can be shifted
+ * by a fraction of a pixel and still read as the same shape sliding, whereas independent
+ * bars each redistribute their own anti-aliasing and shimmer.
+ */
+function drawWave(ctx: CanvasRenderingContext2D, color: string) {
   const mid = height.value / 2
-  ctx.fillStyle = color
-  for (let x = Math.max(0, Math.floor(from)); x < Math.min(width.value, Math.ceil(to)); x++) {
-    const amplitude = peakBetween(timeOf(x), timeOf(x + 1)) * mid
-    ctx.fillRect(x, mid - amplitude, 1, Math.max(amplitude * 2, 1))
+  const columns: { x: number; amplitude: number }[] = []
+  // a column either side of the canvas so the shape does not pop in at the edges
+  for (let column = -1; column <= width.value + 1; column++) {
+    const at = columnTime(column)
+    if (at < 0 || at >= props.duration) continue // the view can extend past either end
+    columns.push({ x: column - subPixel.value, amplitude: peakBetween(at, columnTime(column + 1)) * mid })
   }
+  if (!columns.length) return
+
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.moveTo(columns[0].x, mid - columns[0].amplitude)
+  for (const c of columns) ctx.lineTo(c.x, mid - c.amplitude)
+  for (let i = columns.length - 1; i >= 0; i--) ctx.lineTo(columns[i].x, mid + columns[i].amplitude)
+  ctx.closePath()
+  ctx.fill()
 }
+
+let backingWidth = 0
+let backingHeight = 0
 
 function draw() {
   const ctx = canvas.value?.getContext('2d')
   if (!ctx || !width.value || !height.value) return
 
   const dpr = window.devicePixelRatio || 1
-  canvas.value!.width = width.value * dpr
-  canvas.value!.height = height.value * dpr
+  // resizing clears and reallocates the backing store, so only do it when it really changed
+  if (backingWidth !== width.value * dpr || backingHeight !== height.value * dpr) {
+    backingWidth = canvas.value!.width = width.value * dpr
+    backingHeight = canvas.value!.height = height.value * dpr
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   ctx.fillStyle = COLORS.background
   ctx.fillRect(0, 0, width.value, height.value)
 
-  const waveColor = props.overview ? COLORS.waveOverview : COLORS.wave
-  drawWave(ctx, waveColor, 0, width.value)
+  // zero line, under the wave so it shows through the quiet stretches
+  const mid = Math.round(height.value / 2) + 0.5
+  ctx.strokeStyle = COLORS.zeroLine
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, mid)
+  ctx.lineTo(width.value, mid)
+  ctx.stroke()
+
+  drawWave(ctx, props.overview ? COLORS.waveOverview : COLORS.wave)
 
   // A-B repeat region, drawn over the wave so the looped part reads as one block
   const { loopA, loopB } = props
@@ -133,7 +176,12 @@ function draw() {
     const [left, right] = [xOf(loopA), xOf(loopB)]
     ctx.fillStyle = COLORS.loopFill
     ctx.fillRect(left, 0, right - left, height.value)
-    drawWave(ctx, COLORS.loop, left, right)
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(left, 0, right - left, height.value)
+    ctx.clip()
+    drawWave(ctx, COLORS.loop)
+    ctx.restore()
   }
 
   props.markers.forEach((seconds, i) => {
@@ -181,10 +229,17 @@ watch(
 )
 
 // --- pointer interaction ---
-type Drag = { kind: 'seek' } | { kind: 'marker'; index: number } | { kind: 'loop'; which: 'a' | 'b' }
+const TAP_SLOP = 4 // a press that moves less than this is a tap, not a drag
+
+type Drag =
+  | { kind: 'seek' }
+  | { kind: 'marker'; index: number }
+  | { kind: 'loop'; which: 'a' | 'b' }
+  | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
+
 let drag: Drag | null = null
 const pointers = new Map<number, number>() // pointerId -> x
-let pinchStart: { distance: number; start: number; end: number } | null = null
+let pinchStart: { distance: number; span: number } | null = null
 
 function localX(e: PointerEvent) {
   return e.clientX - (wrapper.value?.getBoundingClientRect().left ?? 0)
@@ -201,14 +256,22 @@ function hitTest(x: number, y: number): Drag {
     const index = props.markers.findIndex((m) => x >= xOf(m) && x <= xOf(m) + FLAG_W)
     if (index >= 0) return { kind: 'marker', index }
   }
-  return { kind: 'seek' }
+  // on the zoomed view an empty press drags the wave under the centre playhead
+  return props.draggable ? { kind: 'pan', fromX: x, fromPosition: props.position, moved: false } : { kind: 'seek' }
 }
 
 function applyDrag(x: number) {
+  if (!drag) return
+  if (drag.kind === 'pan') {
+    const travelled = x - drag.fromX
+    if (Math.abs(travelled) > TAP_SLOP) drag.moved = true
+    if (drag.moved) emit('seek', clampTime(drag.fromPosition - travelled * secondsPerPixel.value))
+    return
+  }
   const seconds = clampTime(timeOf(x))
-  if (drag?.kind === 'seek') emit('seek', seconds)
-  if (drag?.kind === 'marker') emit('moveMarker', drag.index, seconds)
-  if (drag?.kind === 'loop') emit('moveLoop', drag.which, seconds)
+  if (drag.kind === 'seek') emit('seek', seconds)
+  if (drag.kind === 'marker') emit('moveMarker', drag.index, seconds)
+  if (drag.kind === 'loop') emit('moveLoop', drag.which, seconds)
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -221,13 +284,13 @@ function onPointerDown(e: PointerEvent) {
   pointers.set(e.pointerId, e.clientX)
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()]
-    pinchStart = { distance: Math.abs(a - b), start: props.start, end: props.end }
+    pinchStart = { distance: Math.abs(a - b), span: span.value }
     drag = null
     return
   }
   const rect = wrapper.value!.getBoundingClientRect()
   drag = hitTest(localX(e), e.clientY - rect.top)
-  applyDrag(localX(e))
+  if (drag.kind !== 'pan') applyDrag(localX(e)) // a pan only acts once it actually moves
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -235,42 +298,32 @@ function onPointerMove(e: PointerEvent) {
   pointers.set(e.pointerId, e.clientX)
   if (pinchStart && pointers.size === 2) {
     const [a, b] = [...pointers.values()]
-    const factor = pinchStart.distance / Math.max(Math.abs(a - b), 1)
-    const centre = (pinchStart.start + pinchStart.end) / 2
-    zoomTo(centre, (pinchStart.end - pinchStart.start) * factor)
+    emit('zoom', (pinchStart.span * pinchStart.distance) / Math.max(Math.abs(a - b), 1))
     return
   }
   if (drag) applyDrag(localX(e))
 }
 
 function onPointerUp(e: PointerEvent) {
+  // a press that never moved is a tap: jump to the spot it landed on
+  if (drag?.kind === 'pan' && !drag.moved) emit('seek', clampTime(timeOf(localX(e))))
   pointers.delete(e.pointerId)
   if (pointers.size < 2) pinchStart = null
   if (pointers.size === 0) drag = null
 }
 
-function zoomTo(centre: number, newSpan: number) {
-  const clamped = Math.max(2, Math.min(newSpan, props.duration))
-  let start = centre - clamped / 2
-  start = Math.max(0, Math.min(start, props.duration - clamped))
-  emit('window', start, start + clamped)
-}
-
 function onWheel(e: WheelEvent) {
   if (props.overview) return
   e.preventDefault()
-  const centre = timeOf(e.clientX - (wrapper.value?.getBoundingClientRect().left ?? 0))
-  zoomTo(centre, span.value * (e.deltaY > 0 ? 1.2 : 1 / 1.2))
+  emit('zoom', span.value * (e.deltaY > 0 ? 1.2 : 1 / 1.2))
 }
-
-defineExpose({ zoomTo })
 </script>
 
 <template>
   <div
     ref="wrapper"
     class="waveform"
-    :style="{ touchAction: overview ? 'none' : 'pan-y' }"
+    :style="{ touchAction: overview || draggable ? 'none' : 'pan-y' }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
