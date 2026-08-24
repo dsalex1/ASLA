@@ -94,6 +94,7 @@ const editingChords = () => props.annotatable && props.mode == 'chords' && !shal
       <span class="mx-2">{{ fontSize }}</span>
       <v-btn class="me-2" variant="tonal" density="compact" icon="fas fa-plus" @click="fontSize = Math.min(48, fontSize + 2)" />
       <v-btn
+        v-if="mode != 'audio'"
         class="ms-2"
         variant="tonal"
         density="compact"

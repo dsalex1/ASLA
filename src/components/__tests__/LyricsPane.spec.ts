@@ -43,11 +43,24 @@ describe('LyricsPane audio-driven scrolling', () => {
     expect(container.scrollTop).toBe(0)
   })
 
-  it('turns autoscroll off when the reader scrolls away', async () => {
+  it('stops following once the reader scrolls ahead by hand', async () => {
     const { wrapper, container } = await mountPane({ autoScroll: true, position: 0 })
     container.scrollTop = 500 // reader scrolled ahead
     await wrapper.setProps({ position: 25 })
-    expect(wrapper.emitted('update:autoScroll')!.at(-1)).toEqual([false])
+    container.scrollTop = 500
+    await wrapper.setProps({ position: 90 })
+    expect(container.scrollTop).toBe(500) // left where the reader put it
+  })
+
+  it('picks the lyrics back up when playback is started again', async () => {
+    const { wrapper, container } = await mountPane({ autoScroll: true, position: 0 })
+    container.scrollTop = 500
+    await wrapper.setProps({ position: 25 }) // cancels the follow
+    await wrapper.setProps({ autoScroll: false })
+    await wrapper.setProps({ autoScroll: true })
+    container.scrollTop = 0
+    await wrapper.setProps({ position: 90 })
+    expect(container.scrollTop).toBe(Math.round(END_SCROLL / 2))
   })
 
   it('falls back to 150s when the song has no duration', async () => {

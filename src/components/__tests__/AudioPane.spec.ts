@@ -102,6 +102,18 @@ describe('AudioPane track loading', () => {
       expect(wrapper.emitted('update:view')!.at(-1)).toEqual(['lyrics'])
     })
 
+    it('tells the slot whether the audio is playing, so the lyrics can follow', async () => {
+      const wrapper = mount(AudioPane, {
+        props: { song: song([track()]), hasPrev: false, hasNext: false, view: 'lyrics' },
+        slots: { view: '<template #default="{ playing }"><p>{{ playing ? "following" : "still" }}</p></template>' },
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('still')
+      engine.playing.value = true
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('following')
+    })
+
     it('keeps showing the lyrics slot', async () => {
       const wrapper = mount(AudioPane, {
         props: { song: song([]), hasPrev: false, hasNext: false, view: 'lyrics' },

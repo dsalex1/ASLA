@@ -214,8 +214,8 @@ defineExpose({ position: currentTime })
         @moveLoop="setLoop"
         @zoom="zoom"
       />
-      <div v-if="view != 'waveform'" class="h-100 d-flex justify-center" style="overflow: hidden">
-        <slot name="view" :position="currentTime" />
+      <div v-if="view != 'waveform'" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
+        <slot name="view" :position="currentTime" :playing="playing" />
       </div>
       <div v-if="loading || error" class="loading-badge">{{ error || 'Loading audio…' }}</div>
     </div>
@@ -278,7 +278,7 @@ defineExpose({ position: currentTime })
     <!-- A-B, transport and the view switch -->
     <div class="controls">
       <template v-if="hasAudio">
-        <div class="group">
+        <div class="group group--side">
           <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
             <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
           </select>
@@ -287,7 +287,7 @@ defineExpose({ position: currentTime })
           <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
         </div>
 
-        <div class="group">
+        <div class="group group--centre">
           <button class="tbtn" aria-label="Restart or previous song" @click="toStart"><i class="fas fa-backward-fast" /></button>
           <button class="tbtn" aria-label="Back 10 seconds" @click="engine.skip(-SKIP)"><i class="fas fa-backward" /></button>
           <button class="tbtn tbtn--play" :aria-label="playing ? 'Pause' : 'Play'" :disabled="!!error || loading" @click="engine.toggle">
@@ -298,7 +298,7 @@ defineExpose({ position: currentTime })
         </div>
       </template>
 
-      <div class="group segmented">
+      <div class="group group--side segmented">
         <button
           v-for="mode in viewModes"
           :key="mode"
@@ -334,6 +334,17 @@ defineExpose({ position: currentTime })
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 0 0 auto;
+}
+/* equal weight either side keeps the middle group centred in the row */
+.group--side {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.group--side:last-child {
+  justify-content: flex-end;
+}
+.group--centre {
   flex: 0 0 auto;
 }
 
@@ -396,7 +407,6 @@ defineExpose({ position: currentTime })
 /* the mode switch reads as one control rather than three loose buttons */
 .segmented {
   gap: 0;
-  margin-left: auto; /* stays on the right even when it is the only control */
 }
 .segmented .tbtn {
   border-radius: 0;
@@ -422,6 +432,10 @@ defineExpose({ position: currentTime })
   border-radius: 6px;
   background: #1d1d1d;
   color: #e8e8e8;
+}
+
+.view-pane {
+  background: #fff;
 }
 
 .no-audio {

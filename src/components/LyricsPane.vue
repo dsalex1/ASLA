@@ -23,6 +23,15 @@ const emit = defineEmits<{
 
 const container = ref<HTMLElement | null>(null)
 
+// While the playhead drives the scroll, reading ahead by hand pauses the following until
+// playback is started again — turning autoscroll off outright would be a worse trade,
+// because the caller has tied it to "is the audio playing".
+const cancelled = ref(false)
+watch(
+  () => props.autoScroll,
+  (on) => on && (cancelled.value = false)
+)
+
 // scroll so the lyrics start moving `offset` seconds in and arrive 40s before the song ends
 const START_OFFSET = 20
 const END_MARGIN = 40
@@ -76,16 +85,13 @@ watch(
 )
 
 // audio-driven autoscroll
-let audioStartScroll = 0
-watch(
-  () => props.autoScroll && props.position != null,
-  (on) => (audioStartScroll = on ? (container.value?.scrollTop ?? 0) : 0)
-)
+// the playhead maps straight onto a scroll position, so picking up after a manual scroll
+// lands where the song actually is rather than where the reader wandered off to
 watch(
   () => props.position,
   (position) => {
-    if (position == null || !props.autoScroll) return
-    if (!applyProgress(progressAt(position, START_OFFSET), audioStartScroll)) emit('update:autoScroll', false)
+    if (position == null || !props.autoScroll || cancelled.value) return
+    if (!applyProgress(progressAt(position, START_OFFSET), 0)) cancelled.value = true
   }
 )
 </script>

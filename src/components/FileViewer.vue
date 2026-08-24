@@ -218,7 +218,7 @@ function changeTranspose(delta: number) {
         @prevSong="goToSong(-1)"
         @nextSong="goToSong(1)"
       >
-        <template #view="{ position }">
+        <template #view="{ position, playing }">
           <LyricsPane
             :song="song"
             :lyricsMode="audioView == 'chords' ? 'chords' : 'lyrics'"
@@ -226,7 +226,7 @@ function changeTranspose(delta: number) {
             :fontSize="fontSize"
             :transpose="audioView == 'chords' ? transpose : 0"
             :position="position"
-            v-model:autoScroll="autoScroll"
+            :autoScroll="playing"
             @update:lyrics="(lyrics) => saveSong({ lyrics })"
           />
         </template>
