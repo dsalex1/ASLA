@@ -226,6 +226,21 @@ describe('AudioPane transport', () => {
     expect(engine.pitch.value).toBe(24)
   })
 
+  it('double clicking the jogs restores 1.00x and 0 semitones', async () => {
+    const wrapper = await mountPane()
+    const [tempoJog, pitchJog] = wrapper.findAllComponents(JogStrip)
+    expect(tempoJog.props('resetTo')).toBe(120) // the song bpm, ie 1.00x
+    expect(pitchJog.props('resetTo')).toBe(0)
+
+    engine.tempo.value = 0.6
+    engine.pitch.value = 5
+    await wrapper.vm.$nextTick() // let the jogs see the new values before resetting them
+    await tempoJog.trigger('dblclick')
+    await pitchJog.trigger('dblclick')
+    expect(engine.tempo.value).toBe(1)
+    expect(engine.pitch.value).toBe(0)
+  })
+
   it('falls back to a tempo multiplier when the song has no bpm', async () => {
     const wrapper = mount(AudioPane, {
       props: { song: { ...song([track()]), bpm: undefined }, hasPrev: false, hasNext: false, view: 'waveform' },

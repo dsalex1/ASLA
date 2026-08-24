@@ -215,6 +215,7 @@ defineExpose({ position: currentTime })
           <JogStrip
             v-model="tempoJog"
             v-bind="tempoJogRange"
+            :resetTo="song.bpm ?? 1"
             :label="`${tempo.toFixed(2)}x`"
             :sub="effectiveBpm ? `${effectiveBpm} bpm` : undefined"
           />
@@ -236,7 +237,7 @@ defineExpose({ position: currentTime })
 
         <div class="group">
           <button class="tbtn tbtn--glyph" aria-label="Pitch down" @click="adjustPitch(-1)">♭</button>
-          <JogStrip v-model="pitch" :step="0.01" :min="-MAX_PITCH" :max="MAX_PITCH" :label="signed(pitch)" sub="semi" />
+          <JogStrip v-model="pitch" :step="0.01" :min="-MAX_PITCH" :max="MAX_PITCH" :resetTo="0" :label="signed(pitch)" sub="semi" />
           <button class="tbtn tbtn--glyph" aria-label="Pitch up" @click="adjustPitch(1)">♯</button>
         </div>
 

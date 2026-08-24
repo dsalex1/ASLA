@@ -8,6 +8,8 @@ const props = defineProps<{
   max: number
   label: string
   sub?: string
+  /** double-click snaps back to this */
+  resetTo?: number
 }>()
 
 const value = defineModel<number>({ required: true })
@@ -42,6 +44,10 @@ function onPointerUp() {
   dragging.value = false
 }
 
+function onReset() {
+  if (props.resetTo != null) value.value = props.resetTo
+}
+
 function onWheel(e: WheelEvent) {
   e.preventDefault()
   value.value = quantise(value.value + (e.deltaY > 0 ? -props.step : props.step))
@@ -56,6 +62,7 @@ function onWheel(e: WheelEvent) {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
+    @dblclick="onReset"
     @wheel="onWheel"
   >
     <span class="jog__label">{{ label }}</span>

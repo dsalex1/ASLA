@@ -65,6 +65,26 @@ describe('JogStrip dragging', () => {
   })
 })
 
+describe('JogStrip reset', () => {
+  it('snaps back on double click', async () => {
+    const wrapper = render({ modelValue: 7.5, resetTo: 0 })
+    await wrapper.trigger('dblclick')
+    expect(latest(wrapper)).toBe(0)
+  })
+
+  it('resets to whatever the caller nominated, not zero', async () => {
+    const wrapper = render({ modelValue: 96, step: 1, min: 30, max: 480, resetTo: 120 })
+    await wrapper.trigger('dblclick')
+    expect(latest(wrapper)).toBe(120)
+  })
+
+  it('does nothing without a reset value', async () => {
+    const wrapper = render({ modelValue: 3 })
+    await wrapper.trigger('dblclick')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+})
+
 describe('JogStrip wheel', () => {
   it('steps up and down from the running value', async () => {
     const wrapper = render({ modelValue: 0.5 })
