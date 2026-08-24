@@ -28,3 +28,5 @@ coverage
 *.sw?
 
 backup_data
+# local-only sample used when driving the audio UI in the emulator
+public/__test-audio.mp3

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
+import { AUDIO_ACCEPT, audioTrackRefs, deleteAudioTrack, isPlayableAudio, uploadAudioTrack } from '@/helpers/audioTracks'
 import { lyricsHasChords } from '@/helpers/lyrics'
+import { formatDuration } from '@/helpers'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
@@ -179,6 +181,31 @@ async function deleteSheetFile(song: Song) {
   await saveSong(song)
 }
 
+// --- audio tracks ---
+const audioUploading = ref(false)
+
+async function addAudioTrack(song: Song, file?: File) {
+  if (!file) return
+  if (!isPlayableAudio(file)) return alert(`${file.name} is not a playable compressed audio format (${AUDIO_ACCEPT}).`)
+  audioUploading.value = true
+  try {
+    song.audioTracks = [...(song.audioTracks ?? []), await uploadAudioTrack(song, file)]
+    await saveSong(song)
+  } catch (e) {
+    console.error('Failed to add audio track:', e)
+    alert('Failed to add audio track - could the file not be decoded?')
+  }
+  audioUploading.value = false
+}
+
+async function removeAudioTrack(song: Song, index: number) {
+  const track = song.audioTracks?.[index]
+  if (!track || !confirm(`Remove the audio track "${track.name}"?`)) return
+  song.audioTracks = song.audioTracks!.filter((_, i) => i !== index)
+  await saveSong(song)
+  await deleteAudioTrack(track)
+}
+
 const deleting = ref(false)
 
 async function deleteSong(song: Song) {
@@ -203,6 +230,7 @@ async function deleteSong(song: Song) {
       ...(song.pdfImageStorageRefs ?? []),
       song.drumsPdfStorageRef,
       ...(song.drumsPdfImageStorageRefs ?? []),
+      ...audioTrackRefs(song),
     ].filter((ref): ref is string => !!ref)
     await Promise.all(
       storageRefs.map((storageRef) =>
@@ -331,6 +359,41 @@ async function deleteSong(song: Song) {
         density="comfortable"
         class="mb-3"
       />
+
+      <v-divider class="mb-3" />
+
+      <h4 class="mb-2">Audio Tracks</h4>
+      <v-file-input
+        type="file"
+        variant="outlined"
+        density="comfortable"
+        label="Add audio track"
+        :accept="AUDIO_ACCEPT"
+        :loading="audioUploading"
+        :disabled="audioUploading"
+        @input="(evt: InputEvent) => addAudioTrack(song, (evt.target as HTMLInputElement).files?.[0])"
+        class="mb-3"
+      />
+
+      <v-list v-if="song.audioTracks?.length" density="compact" class="mb-3">
+        <v-list-item v-for="(track, index) in song.audioTracks" :key="track.storageRef">
+          <v-text-field
+            v-model="track.name"
+            @input="saveSong(song)"
+            label="Track name"
+            variant="outlined"
+            density="compact"
+            hide-details
+          >
+            <template #append-inner>
+              <span class="text-caption text-grey">{{ formatDuration(Math.round(track.duration)) }}</span>
+            </template>
+          </v-text-field>
+          <template #append>
+            <v-btn icon="fas fa-trash" variant="text" color="error" density="comfortable" @click="removeAudioTrack(song, index)" />
+          </template>
+        </v-list-item>
+      </v-list>
 
       <v-divider class="mb-3" />
 
