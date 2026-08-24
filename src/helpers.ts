@@ -46,3 +46,6 @@ export const getSongInformation = (song: Song) =>
   ]
     .filter(Boolean)
     .join(' - ')
+
+export const formatDuration = (duration?: number) =>
+  duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''

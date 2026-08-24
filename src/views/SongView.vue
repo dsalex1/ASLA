@@ -24,7 +24,7 @@ const songs = computed(() => (currentSong.value ? [currentSong.value] : []))
 
 <template>
   <FullscreenLayout>
-    <FileViewer :songs="songs" :mode="displayMode" annotatable>
+    <FileViewer :songs="songs" :mode="displayMode">
       <h2>
         <Backbutton to="/song" />
         Song
