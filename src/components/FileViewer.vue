@@ -58,6 +58,7 @@ function prev() {
 const swipeTarget = ref<HTMLDivElement | null>(null)
 useSwipe(swipeTarget, {
   onSwipeEnd(_, direction) {
+    if (isAudio.value) return // a sideways drag there scrubs the waveform
     if (direction === 'left') next()
     if (direction === 'right') prev()
   },
