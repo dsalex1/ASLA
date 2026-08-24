@@ -76,9 +76,40 @@ describe('AudioPane track loading', () => {
     expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, 5, 10])
   })
 
-  it('says so when the song has no track', async () => {
-    const wrapper = await mountPane([])
-    expect(wrapper.text()).toContain('No audio track for this song')
+  describe('a song with no audio', () => {
+    it('says so in the strip where the wave would be', async () => {
+      const wrapper = await mountPane([])
+      expect(wrapper.text()).toContain('No audio available')
+    })
+
+    it('still offers the lyrics and chords switcher', async () => {
+      const wrapper = await mountPane([])
+      expect(button(wrapper, 'lyrics')).toBeDefined()
+      expect(button(wrapper, 'chords')).toBeDefined()
+    })
+
+    it('drops the waveform option and every audio control', async () => {
+      const wrapper = await mountPane([])
+      expect(button(wrapper, 'waveform')).toBeUndefined()
+      for (const label of ['Play', 'Add marker', 'Faster', 'Clear A-B', 'Back 10 seconds'])
+        expect(button(wrapper, label)).toBeUndefined()
+      expect(wrapper.findAllComponents(JogStrip)).toHaveLength(0)
+    })
+
+    it('switches away from the waveform view', async () => {
+      const wrapper = mount(AudioPane, { props: { song: song([]), hasPrev: false, hasNext: false, view: 'waveform' } })
+      await flushPromises()
+      expect(wrapper.emitted('update:view')!.at(-1)).toEqual(['lyrics'])
+    })
+
+    it('keeps showing the lyrics slot', async () => {
+      const wrapper = mount(AudioPane, {
+        props: { song: song([]), hasPrev: false, hasNext: false, view: 'lyrics' },
+        slots: { view: '<p>the words</p>' },
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('the words')
+    })
   })
 
   it('starts on the track that was selected last time', async () => {

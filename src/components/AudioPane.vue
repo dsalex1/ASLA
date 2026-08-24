@@ -176,92 +176,108 @@ const tempoJogRange = computed(() =>
 )
 const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
 
+const hasAudio = computed(() => !!track.value)
+const trackDuration = computed(() => duration.value || track.value?.duration || 0)
+const viewModes = computed(() =>
+  (['waveform', 'lyrics', 'chords'] as const).filter((m) => m != 'waveform' || hasAudio.value)
+)
+
+// nothing to show on the waveform when the song has no track
+watch(
+  hasAudio,
+  (audio) => {
+    if (!audio && view.value == 'waveform') view.value = 'lyrics'
+  },
+  { immediate: true }
+)
+
 defineExpose({ position: currentTime })
 </script>
 
 <template>
   <div class="d-flex flex-column h-100 audio-pane">
-    <div v-if="!track" class="flex-1-1-0 d-flex align-center justify-center text-grey">No audio track for this song</div>
+    <div class="flex-1-1-0" style="min-height: 0; position: relative">
+      <WaveformCanvas
+        v-if="hasAudio"
+        v-show="view == 'waveform'"
+        draggable
+        :peaks="peaks"
+        :duration="trackDuration"
+        :start="windowStart"
+        :end="windowEnd"
+        :markers="markers"
+        :loopA="loopA"
+        :loopB="loopB"
+        :position="currentTime"
+        @seek="engine.seek"
+        @moveMarker="moveMarker"
+        @moveLoop="setLoop"
+        @zoom="zoom"
+      />
+      <div v-if="view != 'waveform'" class="h-100 d-flex justify-center" style="overflow: hidden">
+        <slot name="view" :position="currentTime" />
+      </div>
+      <div v-if="loading || error" class="loading-badge">{{ error || 'Loading audio…' }}</div>
+    </div>
 
-    <template v-else>
-      <div class="flex-1-1-0" style="min-height: 0; position: relative">
-        <WaveformCanvas
-          v-show="view == 'waveform'"
-          draggable
-          :peaks="peaks"
-          :duration="duration || track.duration"
-          :start="windowStart"
-          :end="windowEnd"
-          :markers="markers"
-          :loopA="loopA"
-          :loopB="loopB"
-          :position="currentTime"
-          @seek="engine.seek"
-          @moveMarker="moveMarker"
-          @moveLoop="setLoop"
-          @zoom="zoom"
+    <!-- tempo, markers and pitch, flanked by elapsed / remaining -->
+    <div v-if="hasAudio" class="controls">
+      <span class="stamp">{{ stamp(currentTime) }}</span>
+
+      <div class="group">
+        <button class="tbtn" aria-label="Slower" @click="adjustTempo(-0.05)"><i class="fas fa-minus" /></button>
+        <JogStrip
+          v-model="tempoJog"
+          v-bind="tempoJogRange"
+          :resetTo="song.bpm ?? 1"
+          :label="`${tempo.toFixed(2)}x`"
+          :sub="effectiveBpm ? `${effectiveBpm} bpm` : undefined"
         />
-        <div v-if="view != 'waveform'" class="h-100 d-flex justify-center" style="overflow: hidden">
-          <slot name="view" :position="currentTime" />
-        </div>
-        <div v-if="loading || error" class="loading-badge">{{ error || 'Loading audio…' }}</div>
+        <button class="tbtn" aria-label="Faster" @click="adjustTempo(0.05)"><i class="fas fa-plus" /></button>
       </div>
 
-      <!-- tempo, markers and pitch, flanked by elapsed / remaining -->
-      <div class="controls">
-        <span class="stamp">{{ stamp(currentTime) }}</span>
-
-        <div class="group">
-          <button class="tbtn" aria-label="Slower" @click="adjustTempo(-0.05)"><i class="fas fa-minus" /></button>
-          <JogStrip
-            v-model="tempoJog"
-            v-bind="tempoJogRange"
-            :resetTo="song.bpm ?? 1"
-            :label="`${tempo.toFixed(2)}x`"
-            :sub="effectiveBpm ? `${effectiveBpm} bpm` : undefined"
-          />
-          <button class="tbtn" aria-label="Faster" @click="adjustTempo(0.05)"><i class="fas fa-plus" /></button>
-        </div>
-
-        <div class="group">
-          <button class="tbtn" aria-label="Previous marker" @click="jumpMarker(-1)"><i class="fas fa-backward-step" /></button>
-          <button
-            class="tbtn"
-            :class="{ 'tbtn--on': markerAtPlayhead }"
-            :aria-label="markerAtPlayhead ? 'Remove marker' : 'Add marker'"
-            @click="toggleMarker"
-          >
-            <i :class="markerAtPlayhead ? 'fas fa-flag-checkered' : 'fas fa-flag'" />
-          </button>
-          <button class="tbtn" aria-label="Next marker" @click="jumpMarker(1)"><i class="fas fa-forward-step" /></button>
-        </div>
-
-        <div class="group">
-          <button class="tbtn tbtn--glyph" aria-label="Pitch down" @click="adjustPitch(-1)">♭</button>
-          <JogStrip v-model="pitch" :step="0.01" :min="-MAX_PITCH" :max="MAX_PITCH" :resetTo="0" :label="signed(pitch)" sub="semi" />
-          <button class="tbtn tbtn--glyph" aria-label="Pitch up" @click="adjustPitch(1)">♯</button>
-        </div>
-
-        <span class="stamp">-{{ stamp((duration || track.duration) - currentTime) }}</span>
+      <div class="group">
+        <button class="tbtn" aria-label="Previous marker" @click="jumpMarker(-1)"><i class="fas fa-backward-step" /></button>
+        <button
+          class="tbtn"
+          :class="{ 'tbtn--on': markerAtPlayhead }"
+          :aria-label="markerAtPlayhead ? 'Remove marker' : 'Add marker'"
+          @click="toggleMarker"
+        >
+          <i :class="markerAtPlayhead ? 'fas fa-flag-checkered' : 'fas fa-flag'" />
+        </button>
+        <button class="tbtn" aria-label="Next marker" @click="jumpMarker(1)"><i class="fas fa-forward-step" /></button>
       </div>
 
-      <div style="height: 60px; flex: none">
-        <WaveformCanvas
-          overview
-          :peaks="peaks"
-          :duration="duration || track.duration"
-          :start="0"
-          :end="duration || track.duration"
-          :markers="markers"
-          :loopA="loopA"
-          :loopB="loopB"
-          :position="currentTime"
-          @seek="engine.seek"
-        />
+      <div class="group">
+        <button class="tbtn tbtn--glyph" aria-label="Pitch down" @click="adjustPitch(-1)">♭</button>
+        <JogStrip v-model="pitch" :step="0.01" :min="-MAX_PITCH" :max="MAX_PITCH" :resetTo="0" :label="signed(pitch)" sub="semi" />
+        <button class="tbtn tbtn--glyph" aria-label="Pitch up" @click="adjustPitch(1)">♯</button>
       </div>
 
-      <!-- A-B, transport and the view switch -->
-      <div class="controls">
+      <span class="stamp">-{{ stamp(trackDuration - currentTime) }}</span>
+    </div>
+
+    <div style="height: 60px; flex: none">
+      <WaveformCanvas
+        v-if="hasAudio"
+        overview
+        :peaks="peaks"
+        :duration="trackDuration"
+        :start="0"
+        :end="trackDuration"
+        :markers="markers"
+        :loopA="loopA"
+        :loopB="loopB"
+        :position="currentTime"
+        @seek="engine.seek"
+      />
+      <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">No audio available</div>
+    </div>
+
+    <!-- A-B, transport and the view switch -->
+    <div class="controls">
+      <template v-if="hasAudio">
         <div class="group">
           <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
             <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
@@ -280,21 +296,21 @@ defineExpose({ position: currentTime })
           <button class="tbtn" aria-label="Forward 10 seconds" @click="engine.skip(SKIP)"><i class="fas fa-forward" /></button>
           <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
         </div>
+      </template>
 
-        <div class="group segmented">
-          <button
-            v-for="mode in (['waveform', 'lyrics', 'chords'] as const)"
-            :key="mode"
-            class="tbtn"
-            :class="{ 'tbtn--on': view == mode }"
-            :aria-label="mode"
-            @click="view = mode"
-          >
-            <i :class="{ waveform: 'fas fa-wave-square', lyrics: 'fas fa-file-lines', chords: 'fas fa-music' }[mode]" />
-          </button>
-        </div>
+      <div class="group segmented">
+        <button
+          v-for="mode in viewModes"
+          :key="mode"
+          class="tbtn"
+          :class="{ 'tbtn--on': view == mode }"
+          :aria-label="mode"
+          @click="view = mode"
+        >
+          <i :class="{ waveform: 'fas fa-wave-square', lyrics: 'fas fa-file-lines', chords: 'fas fa-music' }[mode]" />
+        </button>
       </div>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -380,6 +396,7 @@ defineExpose({ position: currentTime })
 /* the mode switch reads as one control rather than three loose buttons */
 .segmented {
   gap: 0;
+  margin-left: auto; /* stays on the right even when it is the only control */
 }
 .segmented .tbtn {
   border-radius: 0;
@@ -405,6 +422,10 @@ defineExpose({ position: currentTime })
   border-radius: 6px;
   background: #1d1d1d;
   color: #e8e8e8;
+}
+
+.no-audio {
+  font-size: 13px;
 }
 
 .loading-badge {
