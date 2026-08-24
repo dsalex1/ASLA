@@ -38,7 +38,14 @@ const track = (over: Partial<AudioTrack> = {}): AudioTrack => ({
   ...over,
 })
 
-const song = (tracks: AudioTrack[]): Song => ({ id: 's1', filename: 'a', name: 'A', bpm: 120, audioTracks: tracks })
+const song = (tracks: AudioTrack[], over: Partial<Song> = {}): Song => ({
+  id: 's1',
+  filename: 'a',
+  name: 'A',
+  bpm: 120,
+  audioTracks: tracks,
+  ...over,
+})
 
 const mountPane = async (tracks: AudioTrack[] = [track()]) => {
   const wrapper = mount(AudioPane, { props: { song: song(tracks), hasPrev: false, hasNext: false, view: 'waveform' } })
@@ -72,6 +79,37 @@ describe('AudioPane track loading', () => {
   it('says so when the song has no track', async () => {
     const wrapper = await mountPane([])
     expect(wrapper.text()).toContain('No audio track for this song')
+  })
+
+  it('starts on the track that was selected last time', async () => {
+    const wrapper = mount(AudioPane, {
+      props: {
+        song: song([track(), track({ name: 'Live', storageRef: 'audio/live.mp3' })], { selectedAudioTrack: 1 }),
+        hasPrev: false,
+        hasNext: false,
+        view: 'waveform',
+      },
+    })
+    await flushPromises()
+    expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('1')
+  })
+
+  it('falls back to the first track when the remembered one is gone', async () => {
+    const wrapper = mount(AudioPane, {
+      props: { song: song([track()], { selectedAudioTrack: 3 }), hasPrev: false, hasNext: false, view: 'waveform' },
+    })
+    await flushPromises()
+    expect((wrapper.vm as unknown as { trackIndex: number }).trackIndex).toBe(0)
+  })
+
+  it('saves the picked track alongside its settings', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountPane([track(), track({ name: 'Live', storageRef: 'audio/live.mp3' })])
+    await wrapper.find('select').setValue('1')
+    await vi.advanceTimersByTimeAsync(600)
+    vi.useRealTimers()
+    const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { selectedAudioTrack: number }
+    expect(written.selectedAudioTrack).toBe(1)
   })
 
   it('offers a picker only when there is more than one track', async () => {

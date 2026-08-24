@@ -31,8 +31,9 @@ const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instea
 const engine = useAudioEngine()
 const { currentTime, duration, playing, loading, error, tempo, pitch, loopA, loopB } = engine
 
-const trackIndex = ref(0)
 const tracks = computed(() => props.song.audioTracks ?? [])
+const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
+const trackIndex = ref(startingTrack())
 const track = computed((): AudioTrack | undefined => tracks.value[trackIndex.value])
 const peaks = ref(new Uint8Array())
 const markers = ref<number[]>([])
@@ -45,7 +46,7 @@ const windowEnd = computed(() => currentTime.value + span.value / 2)
 
 watch(
   () => props.song.id,
-  () => (trackIndex.value = 0)
+  () => (trackIndex.value = startingTrack())
 )
 
 // Every write re-creates the track object, so the load is keyed on which file it is:
@@ -84,10 +85,10 @@ const persist = useDebounceFn(() => {
     if (loopB.value != null) next.loopB = loopB.value
     return next
   })
-  updateDoc(doc(songCollection, props.song.id), { audioTracks: updated })
+  updateDoc(doc(songCollection, props.song.id), { audioTracks: updated, selectedAudioTrack: trackIndex.value })
 }, 500)
 
-watch([markers, loopA, loopB, tempo, pitch], persist, { deep: true })
+watch([markers, loopA, loopB, tempo, pitch, trackIndex], persist, { deep: true })
 
 // --- markers ---
 const nearestMarker = (seconds: number) =>
