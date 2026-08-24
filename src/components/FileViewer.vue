@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AnnotationEditor from '@/components/AnnotationEditor.vue'
 import AnnotationToolbar from '@/components/AnnotationToolbar.vue'
+import AudioPane from '@/components/AudioPane.vue'
 import FileNavStrip from '@/components/FileNavStrip.vue'
 import LyricsPane from '@/components/LyricsPane.vue'
 import SheetPane from '@/components/SheetPane.vue'
@@ -70,12 +71,27 @@ const currentSong = computed(() => props.songs[currentFileIndex.value])
 // a plain song, as opposed to a custom setlist entry
 const song = computed(() => (currentSong.value && 'name' in currentSong.value ? currentSong.value : undefined))
 
+// audio mode swaps the big area between the waveform and the lyrics/chords panes
+const audioView = ref<'waveform' | 'lyrics' | 'chords'>('waveform')
+const isAudio = computed(() => props.mode == 'audio')
+
+function goToSong(delta: number) {
+  const target = currentFileIndex.value + delta
+  if (target < 0 || target >= fileContents.value.length) return
+  currentFileIndex.value = target
+  currentFilePage.value = 1
+}
+
 const shallShowLyrics = ref(props.mode == 'lyrics')
 const hasSheet = computed(() => {
   const file = fileContents.value[currentFileIndex.value]
   return !!(file?.dataUrl || file?.urls.length)
 })
-const showLyrics = computed(() => shallShowLyrics.value || (fileContents.value.length > 0 && !hasSheet.value))
+const showLyrics = computed(
+  () => !isAudio.value && (shallShowLyrics.value || (fileContents.value.length > 0 && !hasSheet.value))
+)
+// the lyrics pane is on screen either way, so the font/autoscroll controls stay useful
+const lyricsOnScreen = computed(() => showLyrics.value || (isAudio.value && audioView.value != 'waveform'))
 const fontSize = ref(16)
 const autoScroll = ref(false)
 
@@ -160,7 +176,7 @@ function changeTranspose(delta: number) {
       :mode="mode"
       :annotatable="annotatable"
       :transpose="transpose"
-      :showLyrics="showLyrics"
+      :showLyrics="lyricsOnScreen"
       :canAnnotate="!!annotations.refPath.value"
       :annotLoading="annotations.loading.value"
       :bpm="currentBpm"
@@ -185,8 +201,36 @@ function changeTranspose(delta: number) {
       "
       ref="swipeTarget"
     >
-      <div v-if="!annot" @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
-      <div v-if="!annot" @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
+      <template v-if="!annot && !isAudio">
+        <div @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
+        <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
+      </template>
+
+      <AudioPane
+        v-if="isAudio && song"
+        :key="currentFileIndex"
+        class="w-100"
+        style="position: absolute; inset: 0; z-index: 20"
+        :song="song"
+        :hasPrev="currentFileIndex > 0"
+        :hasNext="currentFileIndex < fileContents.length - 1"
+        v-model:view="audioView"
+        @prevSong="goToSong(-1)"
+        @nextSong="goToSong(1)"
+      >
+        <template #view="{ position }">
+          <LyricsPane
+            :song="song"
+            :lyricsMode="audioView == 'chords' ? 'chords' : 'lyrics'"
+            showModeration
+            :fontSize="fontSize"
+            :transpose="audioView == 'chords' ? transpose : 0"
+            :position="position"
+            v-model:autoScroll="autoScroll"
+            @update:lyrics="(lyrics) => saveSong({ lyrics })"
+          />
+        </template>
+      </AudioPane>
 
       <AnnotationEditor
         v-if="annot"

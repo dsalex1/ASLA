@@ -17,7 +17,10 @@ export default ({ mode }: { mode: string }) => {
         registerType: 'autoUpdate',
         workbox: {
           globPatterns: ['**/*'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 ** 2
+          globIgnores: ['**/__test-*'],
+          // the app ships as one inlined chunk (see inlineDynamicImports); keep this well above its
+          // size or workbox drops it from the precache manifest without failing the build
+          maximumFileSizeToCacheInBytes: 20 * 1024 ** 2,
         },
         includeAssets: ['**/*'],
         manifest: {
