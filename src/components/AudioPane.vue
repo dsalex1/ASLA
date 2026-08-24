@@ -58,7 +58,7 @@ watch(
     windowEnd.value = Math.min(DEFAULT_SPAN, current.duration)
     peaks.value = new Uint8Array()
     peaks.value = await loadPeaks(current)
-    await engine.load(await audioUrl(current))
+    await engine.load(await audioUrl(current), current.duration)
   },
   { immediate: true }
 )
@@ -91,12 +91,14 @@ function snap(seconds: number) {
 }
 
 function toggleMarker() {
+  if (!Number.isFinite(currentTime.value)) return
   const existing = markers.value.findIndex((m) => Math.abs(m - currentTime.value) <= MARKER_HIT)
   if (existing >= 0) markers.value = markers.value.filter((_, i) => i !== existing)
   else markers.value = [...markers.value, currentTime.value].sort((a, b) => a - b)
 }
 
 function moveMarker(index: number, seconds: number) {
+  if (!Number.isFinite(seconds)) return
   const moved = markers.value.map((m, i) => (i === index ? seconds : m))
   markers.value = moved.sort((a, b) => a - b)
 }
@@ -109,6 +111,7 @@ const jumpMarker = (direction: -1 | 1) => {
 
 // --- A-B repeat ---
 function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
+  if (!Number.isFinite(seconds)) return
   const at = snap(seconds)
   if (which === 'a') {
     loopA.value = at

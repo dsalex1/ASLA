@@ -212,7 +212,12 @@ function applyDrag(x: number) {
 }
 
 function onPointerDown(e: PointerEvent) {
-  ;(e.target as Element).setPointerCapture(e.pointerId)
+  // capture is a nicety; a browser that refuses it must not lose the whole gesture
+  try {
+    ;(e.target as Element).setPointerCapture(e.pointerId)
+  } catch {
+    /* ignore */
+  }
   pointers.set(e.pointerId, e.clientX)
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()]

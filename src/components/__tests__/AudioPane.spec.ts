@@ -64,7 +64,7 @@ describe('AudioPane track loading', () => {
     await mountPane([track({ markers: [5, 10], loopA: 5, loopB: 10, tempo: 0.8, pitch: -2 })])
     expect(loadPeaks).toHaveBeenCalledOnce()
     expect(audioUrl).toHaveBeenCalledOnce()
-    expect(engine.load).toHaveBeenCalledWith('blob:track')
+    expect(engine.load).toHaveBeenCalledWith('blob:track', 100) // duration up front so the waveform is scrubbable while decoding
     expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, 5, 10])
   })
 
@@ -102,6 +102,13 @@ describe('AudioPane markers', () => {
     engine.currentTime.value = 12
     await button(wrapper, 'backward-step').trigger('click')
     expect(engine.seek).toHaveBeenLastCalledWith(5)
+  })
+
+  it('refuses to store a marker at a non-finite position', async () => {
+    const wrapper = await mountPane([track({ markers: [20] })])
+    engine.currentTime.value = NaN
+    await button(wrapper, 'flag').trigger('click')
+    expect(markersOf(wrapper)).toEqual([20])
   })
 
   it('runs to the track ends when there is no marker that way', async () => {

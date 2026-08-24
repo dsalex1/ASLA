@@ -28,16 +28,16 @@ export function useAudioEngine() {
 
   function teardownShifter() {
     shifter?.disconnect()
-    shifter?.off()
     shifter = null
-    playing.value = false
+    pause()
   }
 
-  async function load(url: string) {
+  /** knownDuration lets the waveform be scrubbed while the file is still decoding */
+  async function load(url: string, knownDuration = 0) {
     const token = ++loadToken
     teardownShifter()
     buffer = null
-    duration.value = 0
+    duration.value = knownDuration
     currentTime.value = 0
     loading.value = true
     error.value = ''
@@ -61,13 +61,31 @@ export function useAudioEngine() {
     shifter = new PitchShifter(audioContext(), buffer, BUFFER_SIZE, () => pause())
     shifter.tempo = tempo.value
     shifter.pitchSemitones = pitch.value
-    shifter.percentagePlayed = duration.value ? currentTime.value / duration.value : 0
-    shifter.on('play', ({ timePlayed }) => {
-      currentTime.value = timePlayed
-      // A-B repeat: jump back as soon as the playhead runs past B
-      if (loopB.value != null && loopA.value != null && timePlayed >= loopB.value) seek(loopA.value)
-    })
+    seekShifter(currentTime.value)
     return shifter
+  }
+
+  // SoundTouch reports how far it has read ahead, which leads what you hear by a few
+  // hundred ms, so the playhead is driven off the audio clock instead.
+  let baseContextTime = 0
+  let baseTrackTime = 0
+  let frame: number | null = null
+
+  function rebase() {
+    baseContextTime = audioContext().currentTime
+    baseTrackTime = currentTime.value
+  }
+
+  const positionNow = () => baseTrackTime + (audioContext().currentTime - baseContextTime) * tempo.value
+
+  function tick() {
+    if (!playing.value) return
+    const at = positionNow()
+    // A-B repeat: jump back as soon as the playhead runs past B
+    if (loopA.value != null && loopB.value != null && at >= loopB.value) seek(loopA.value)
+    else if (at >= duration.value) (currentTime.value = duration.value), pause()
+    else currentTime.value = at
+    frame = requestAnimationFrame(tick)
   }
 
   async function play() {
@@ -76,26 +94,42 @@ export function useAudioEngine() {
     await audioContext().resume()
     if (loopA.value != null && loopB.value != null && (currentTime.value < loopA.value || currentTime.value >= loopB.value))
       seek(loopA.value)
+    rebase()
     s.connect(audioContext().destination)
     playing.value = true
+    tick()
   }
 
   function pause() {
+    // frames stop while the page is hidden, so take the position from the clock rather
+    // than trusting whatever the last frame wrote
+    if (playing.value) currentTime.value = Math.max(0, Math.min(positionNow(), duration.value))
     shifter?.disconnect()
     playing.value = false
+    if (frame) cancelAnimationFrame(frame)
+    frame = null
   }
 
   const toggle = () => (playing.value ? pause() : play())
 
+  const seekShifter = (seconds: number) => {
+    if (shifter && duration.value) shifter.percentagePlayed = seconds / duration.value
+  }
+
   function seek(seconds: number) {
-    const clamped = Math.max(0, Math.min(seconds, duration.value))
-    currentTime.value = clamped
-    if (shifter && duration.value) shifter.percentagePlayed = clamped / duration.value
+    if (!Number.isFinite(seconds)) return // a seek from a not-yet-measured waveform must not poison the position
+    currentTime.value = Math.max(0, Math.min(seconds, duration.value))
+    seekShifter(currentTime.value)
+    rebase()
   }
 
   const skip = (seconds: number) => seek(currentTime.value + seconds)
 
-  watch(tempo, (v) => shifter && (shifter.tempo = v))
+  // the clock slope changes with tempo, so restart the measurement from here
+  watch(tempo, (v) => {
+    rebase()
+    if (shifter) shifter.tempo = v
+  })
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
 
   onUnmounted(() => {
