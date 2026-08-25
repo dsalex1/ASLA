@@ -336,10 +336,11 @@ defineExpose({ position: currentTime })
   gap: 4px;
   flex: 0 0 auto;
 }
-/* equal weight either side keeps the middle group centred in the row */
+/* Equal weight either side keeps the middle group centred. No min-width override, so the
+   groups refuse to shrink under their contents and the row wraps like the one above the
+   waveform instead of squashing the transport. */
 .group--side {
   flex: 1 1 0;
-  min-width: 0;
 }
 .group--side:last-child {
   justify-content: flex-end;
