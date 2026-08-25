@@ -18,13 +18,41 @@ export function useAudioEngine() {
   const pitch = ref(0)
   const loopA = ref<number | null>(null)
   const loopB = ref<number | null>(null)
+  const volume = ref(1)
+  const outputDevice = ref('')
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
   let shifter: PitchShifter | null = null
+  let gain: GainNode | null = null
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
+
+  // everything is routed through one gain node, so volume survives track changes
+  function output() {
+    if (!gain) {
+      gain = audioContext().createGain()
+      gain.gain.value = volume.value
+      gain.connect(audioContext().destination)
+    }
+    return gain
+  }
+
+  /**
+   * Only Chromium implements AudioContext.setSinkId, and only over https or localhost;
+   * elsewhere the picker is hidden and playback stays on the system default.
+   */
+  const canPickOutput = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype
+
+  async function applySink(id: string) {
+    if (!canPickOutput) return
+    try {
+      await (audioContext() as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(id)
+    } catch (e) {
+      console.error('Failed to switch audio output:', e)
+    }
+  }
 
   function teardownShifter() {
     shifter?.disconnect()
@@ -95,7 +123,7 @@ export function useAudioEngine() {
     if (loopA.value != null && loopB.value != null && (currentTime.value < loopA.value || currentTime.value >= loopB.value))
       seek(loopA.value)
     rebase()
-    s.connect(audioContext().destination)
+    s.connect(output())
     playing.value = true
     tick()
   }
@@ -131,13 +159,19 @@ export function useAudioEngine() {
     if (shifter) shifter.tempo = v
   })
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
+  watch(volume, (v) => gain && (gain.gain.value = v))
+  watch(outputDevice, applySink)
 
   onUnmounted(() => {
     teardownShifter()
     buffer = null
+    gain = null
     context?.close()
     context = null
   })
 
-  return { currentTime, duration, playing, loading, error, tempo, pitch, loopA, loopB, load, play, pause, toggle, seek, skip }
+  return {
+    currentTime, duration, playing, loading, error, tempo, pitch, volume, outputDevice, canPickOutput,
+    loopA, loopB, load, play, pause, toggle, seek, skip,
+  }
 }
