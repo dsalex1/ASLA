@@ -5,13 +5,14 @@ import AudioPane from '@/components/AudioPane.vue'
 import FileNavStrip from '@/components/FileNavStrip.vue'
 import LyricsPane from '@/components/LyricsPane.vue'
 import SheetPane from '@/components/SheetPane.vue'
+import SongEdit from '@/components/SongEdit.vue'
 import SongInfoBar from '@/components/SongInfoBar.vue'
 import { useAnnotations } from '@/composables/useAnnotations'
 import { useFileContents } from '@/composables/useFileContents'
 import { createMetronome } from '@/helpers/metronome'
 import { songCollection } from '@/plugins/firebase'
 import { CustomSetlistEntry, Song, ViewMode } from '@/types'
-import { useSwipe, useWindowSize } from '@vueuse/core'
+import { useElementSize, useSwipe, useWindowSize } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, onUnmounted, ref, toRef, watch } from 'vue'
 
@@ -20,6 +21,8 @@ const props = defineProps<{
   mode?: ViewMode
   annotatable?: boolean
 }>()
+
+const emit = defineEmits<{ (e: 'songDeleted'): void }>()
 
 const currentFileIndex = ref(0)
 const currentFilePage = ref(1)
@@ -56,6 +59,7 @@ function prev() {
 }
 
 const swipeTarget = ref<HTMLDivElement | null>(null)
+const { width: boxWidth, height: boxHeight } = useElementSize(swipeTarget)
 useSwipe(swipeTarget, {
   onSwipeEnd(_, direction) {
     if (isAudio.value) return // a sideways drag there scrubs the waveform
@@ -71,6 +75,10 @@ const annotWidth = ref(2)
 const currentSong = computed(() => props.songs[currentFileIndex.value])
 // a plain song, as opposed to a custom setlist entry
 const song = computed(() => (currentSong.value && 'name' in currentSong.value ? currentSong.value : undefined))
+
+// --- quick edit of the current song ---
+const editDialogOpen = ref(false)
+const editableSong = computed(() => (song.value?.id ? song.value : undefined))
 
 // audio mode swaps the big area between the waveform and the lyrics/chords panes
 const audioView = ref<'waveform' | 'lyrics' | 'chords'>('waveform')
@@ -140,6 +148,7 @@ function changeTranspose(delta: number) {
       <div>
         <slot></slot>
       </div>
+      <v-btn v-if="editableSong" icon="fas fa-pen" size="small" variant="text" @click="editDialogOpen = true" />
       <FileNavStrip
         :files="fileContents"
         :fileIndex="currentFileIndex"
@@ -240,6 +249,8 @@ function changeTranspose(delta: number) {
         :pages="annot.pages"
         :page="currentFilePage"
         :displayHeight="pdfHeight"
+        :boxWidth="boxWidth"
+        :boxHeight="boxHeight"
         :tool="annotTool"
         :gray="annotGray"
         :strokeWidth="annotWidth"
@@ -277,5 +288,14 @@ function changeTranspose(delta: number) {
         :hidden="showLyrics"
       />
     </div>
+
+    <v-dialog v-model="editDialogOpen" max-width="800px" scrollable>
+      <SongEdit
+        v-if="editableSong"
+        :song="editableSong"
+        @close="editDialogOpen = false"
+        @deleted=";((editDialogOpen = false), emit('songDeleted'))"
+      />
+    </v-dialog>
   </div>
 </template>

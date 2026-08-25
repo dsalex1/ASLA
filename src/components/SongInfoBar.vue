@@ -31,9 +31,9 @@ const editingChords = () => props.annotatable && props.mode == 'chords' && !shal
 
 <template>
   <div class="w-100 text-center">
-    <span v-html="getSongInformation(song)" />
+    <span v-html="getSongInformation(song, false)" />
     <span v-if="song.duration">
-      -
+      <template v-if="getSongInformation(song, false)">-</template>
       <v-icon size="sm" icon="far fa-clock mb-1 " />
       {{ formatDuration(song.duration) }}
     </span>
@@ -61,8 +61,10 @@ const editingChords = () => props.annotatable && props.mode == 'chords' && !shal
       @click="$emit('annotate')"
     />
     <v-btn
-      v-if="mode == 'drums' && bpm"
+      v-if="bpm"
       class="ms-2"
+      :class="{ 'bpm-blink': clicking }"
+      :style="clicking ? { animationDuration: 60 / bpm + 's' } : {}"
       variant="tonal"
       density="compact"
       :color="clicking ? 'primary' : undefined"
@@ -104,3 +106,18 @@ const editingChords = () => props.annotatable && props.mode == 'chords' && !shal
     </template>
   </div>
 </template>
+
+<style>
+@keyframes bpm-blink {
+  0% {
+    opacity: 0.3;
+  }
+  40%,
+  100% {
+    opacity: 1;
+  }
+}
+.bpm-blink {
+  animation: bpm-blink 0.5s infinite;
+}
+</style>

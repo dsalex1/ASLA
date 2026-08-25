@@ -1,9 +1,18 @@
+import { createRequire } from 'node:module'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
 import { VitePWA } from 'vite-plugin-pwa'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { transformAssetUrls } from 'vite-plugin-vuetify'
+
+// in a git worktree node_modules resolves to the main checkout, outside vite's
+// default fs allow list — allow the actually-resolved node_modules dir too
+const nodeModulesDir = resolve(
+  dirname(createRequire(import.meta.url).resolve('@fortawesome/fontawesome-free/package.json')),
+  '../..'
+)
 
 // https://vitejs.dev/config/
 export default ({ mode }: { mode: string }) => {
@@ -48,6 +57,11 @@ export default ({ mode }: { mode: string }) => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
+    },
+    server: {
+      fs: {
+        allow: [searchForWorkspaceRoot(process.cwd()), nodeModulesDir],
       },
     },
     build: {

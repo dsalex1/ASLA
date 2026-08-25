@@ -3,12 +3,13 @@ import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarI
 import { AUDIO_ACCEPT, audioTrackRefs, deleteAudioTrack, isPlayableAudio, uploadAudioTrack } from '@/helpers/audioTracks'
 import { lyricsHasChords } from '@/helpers/lyrics'
 import { formatDuration } from '@/helpers'
-import { setlistCollection, songCollection } from '@/plugins/firebase'
+import { folderCollection, setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { arrayRemove, deleteDoc, doc, getDocs, query, updateDoc, where } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useCollection } from 'vuefire'
 
 defineProps<{
   song: Song
@@ -20,6 +21,11 @@ const emit = defineEmits<{
 }>()
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+const folders = useCollection(folderCollection)
+const folderItems = computed(() =>
+  [...folders.value].sort((a, b) => a.name.localeCompare(b.name)).map((f) => ({ title: f.name, value: f.id }))
+)
 
 function applyImport(song: Song, data: UgImportData) {
   if (song.lyrics && !confirm('Overwrite existing lyrics?')) return
@@ -206,6 +212,14 @@ async function removeAudioTrack(song: Song, index: number) {
   await deleteAudioTrack(track)
 }
 
+function confirmDeleteDrumsFile(song: Song) {
+  if (confirm('Delete the drums PDF?')) deleteDrumsFile(song)
+}
+
+function confirmDeleteSheetFile(song: Song) {
+  if (confirm('Delete the sheet PDF?')) deleteSheetFile(song)
+}
+
 const deleting = ref(false)
 
 async function deleteSong(song: Song) {
@@ -253,8 +267,8 @@ async function deleteSong(song: Song) {
 <template>
   <v-card>
     <v-card-title class="d-flex justify-space-between align-center">
-      <span>Edit Song - {{ song.name || song.filename }}</span>
-      <v-btn icon="fas fa-times" variant="text" @click="emit('close')" />
+      <span class="text-truncate" style="min-width: 0">Edit Song - {{ song.name || song.filename }}</span>
+      <v-btn class="flex-shrink-0" icon="fas fa-times" variant="text" @click="emit('close')" />
     </v-card-title>
     <v-card-text>
       <v-text-field
@@ -263,7 +277,6 @@ async function deleteSong(song: Song) {
         label="Name"
         variant="outlined"
         density="comfortable"
-        class="mb-3"
       />
 
       <UltimateGuitarImport :query="song.name || ''" class="mb-3" @import="(data) => applyImport(song, data)" />
@@ -334,6 +347,18 @@ async function deleteSong(song: Song) {
         label="Ibi Instrument"
         variant="outlined"
         density="comfortable"
+        class="mb-3"
+      />
+
+      <v-select
+        v-model="song.folderId"
+        :items="folderItems"
+        @update:model-value="saveSong(song)"
+        label="Folder"
+        placeholder="No folder"
+        variant="outlined"
+        density="comfortable"
+        clearable
         class="mb-3"
       />
 
@@ -426,7 +451,9 @@ async function deleteSong(song: Song) {
           </template>
           <div v-else class="text-grey text-caption">No cached preview images available for this file yet.</div>
         </div>
-        <v-btn color="error" @click="deleteDrumsFile(song)" block>Remove Drums PDF</v-btn>
+        <v-btn color="error" prepend-icon="fas fa-trash" @click="confirmDeleteDrumsFile(song)" block>
+          Remove Drums PDF
+        </v-btn>
       </template>
 
       <v-divider class="mb-3" />
@@ -460,7 +487,9 @@ async function deleteSong(song: Song) {
           </template>
           <div v-else class="text-grey text-caption">No cached preview images available for this file yet.</div>
         </div>
-        <v-btn color="error" class="mb-3" @click="deleteSheetFile(song)" block>Remove Sheet PDF</v-btn>
+        <v-btn color="error" class="mb-3" prepend-icon="fas fa-trash" @click="confirmDeleteSheetFile(song)" block>
+          Remove Sheet PDF
+        </v-btn>
       </template>
 
       <v-divider class="mb-3" />

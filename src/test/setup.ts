@@ -39,6 +39,12 @@ vi.mock('firebase/storage', () => ({
   deleteObject: vi.fn(() => Promise.resolve()),
 }))
 
+// components mounted bare are not inside a <router-view>
+vi.mock('vue-router', async (original) => ({
+  ...(await original<typeof import('vue-router')>()),
+  onBeforeRouteLeave: vi.fn(),
+}))
+
 vi.mock('@/plugins/sheetBaseDirectory', () => ({
   useSheetBaseDirectory: () => ({ baseDirectory: ref(undefined), pdfTree: ref([]), chooseNewSheetBaseDirectory: vi.fn() }),
 }))

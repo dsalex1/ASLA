@@ -31,7 +31,6 @@ const songs = computed(() =>
     <FileViewer :songs="songs" :mode="displayMode">
       <h2>
         <Backbutton :to="HOME_ROUTE" />
-        Setlist
       </h2>
     </FileViewer>
   </FullscreenLayout>

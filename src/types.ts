@@ -18,6 +18,11 @@ export type CustomSetlistEntry = {
 
 export type ViewMode = 'lyrics' | 'chords' | 'drums' | 'audio'
 
+export type Folder = {
+  id?: string
+  name: string
+}
+
 export type AudioTrack = {
   name: string
   storageRef: string
@@ -47,6 +52,7 @@ export type Song = {
   duration?: number
   lyrics?: string
   transpose?: number // semitones (-11..11) applied to chords in the lyrics chord view
+  folderId?: string | null // null/absent = no folder
   audioTracks?: AudioTrack[]
   selectedAudioTrack?: number // index into audioTracks, remembered between visits
 }

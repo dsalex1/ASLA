@@ -1,8 +1,10 @@
 import { FileContent } from '@/composables/useFileContents'
 import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
 import { CustomSetlistEntry, Song, ViewMode } from '@/types'
+import { useEventListener } from '@vueuse/core'
 import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
 import { computed, Ref, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 export type AnnotationState = {
   bytes: Uint8Array
@@ -63,10 +65,18 @@ export function useAnnotations(opts: {
     }
   }
 
+  const confirmDiscard = () => !annot.value?.dirty || confirm('Discard unsaved annotations?')
+
   function stop() {
-    if (annot.value?.dirty && !confirm('Discard unsaved annotations?')) return
-    annot.value = null
+    if (confirmDiscard()) annot.value = null
   }
+
+  // guard every way out of drawing mode with unsaved changes: in-app navigation
+  // (browser/hardware back included, vue-router intercepts it) and tab close/reload
+  onBeforeRouteLeave(confirmDiscard)
+  useEventListener(window, 'beforeunload', (e) => {
+    if (annot.value?.dirty) e.preventDefault()
+  })
 
   function onOp(op: StrokeOp) {
     const a = annot.value!

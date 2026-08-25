@@ -11,7 +11,7 @@ import {
 import { connectStorageEmulator, getStorage } from 'firebase/storage'
 import { getPerformance } from 'firebase/performance'
 import { getAnalytics } from 'firebase/analytics'
-import { Setlist, Song } from '@/types'
+import { Folder, Setlist, Song } from '@/types'
 
 const env = import.meta.env
 
@@ -47,6 +47,7 @@ const typedCollection = <T>(db: Firestore, col: string) => collection(db, col) a
 
 export const setlistCollection = typedCollection<Setlist>(db, 'setlist')
 export const songCollection = typedCollection<Song>(db, 'songs')
+export const folderCollection = typedCollection<Folder>(db, 'folders')
 
 type FilteredKeys<T, U> = { [P in keyof T]: P extends U ? never : P }[keyof T]
 
