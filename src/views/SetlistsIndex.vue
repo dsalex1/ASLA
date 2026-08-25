@@ -3,6 +3,13 @@ import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { useCollection } from 'vuefire'
 
+const modes = [
+  { mode: 'lyrics', label: 'Lyrics', icon: 'fa fa-microphone', color: 'secondary' },
+  { mode: 'chords', label: 'Chords', icon: 'fas fa-file-lines', color: 'primary' },
+  { mode: 'drums', label: 'Drums', icon: 'fas fa-drum', color: 'info' },
+  { mode: 'audio', label: 'Audio', icon: 'fas fa-headphones', color: 'warning' },
+] as const
+
 const setlists = useCollection(setlistCollection)
 const songs = useCollection(songCollection)
 
@@ -80,31 +87,16 @@ function formatDuration(duration?: number) {
           <v-card-text>
             <v-btn-group class="w-100 mb-2">
               <v-btn
-                color="secondary"
+                v-for="m in modes"
+                :key="m.mode"
+                :color="m.color"
                 variant="flat"
-                style="flex: 1; flex-basis: 0px"
-                prepend-icon="fa fa-microphone"
-                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'lyrics' } })"
+                class="mode-btn"
+                style="flex: 1; flex-basis: 0px; min-width: 0"
+                :prepend-icon="m.icon"
+                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: m.mode } })"
               >
-                Lyrics
-              </v-btn>
-              <v-btn
-                color="primary"
-                variant="flat"
-                style="flex: 1; flex-basis: 0px"
-                prepend-icon="fas fa-file-lines"
-                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'chords' } })"
-              >
-                Chords
-              </v-btn>
-              <v-btn
-                color="info"
-                variant="flat"
-                style="flex: 1; flex-basis: 0px"
-                prepend-icon="fas fa-drum"
-                @click="$router.push({ path: `/setlist/${setlist.id}`, query: { mode: 'drums' } })"
-              >
-                Drums
+                {{ m.label }}
               </v-btn>
             </v-btn-group>
             <v-chip size="small" v-for="song in setlist.songs" :key="JSON.stringify(song)">
@@ -122,3 +114,20 @@ function formatDuration(duration?: number) {
     </v-row>
   </AppLayout>
 </template>
+
+<style scoped>
+/* trim the chrome so the label keeps as many characters as possible before clipping */
+.mode-btn {
+  padding-inline: 8px !important;
+}
+.mode-btn :deep(.v-btn__prepend) {
+  margin-inline: 0 4px;
+}
+.mode-btn :deep(.v-btn__content) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+</style>

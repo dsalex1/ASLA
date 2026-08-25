@@ -6,13 +6,14 @@ import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { HOME_ROUTE } from '@/router'
 import { doc } from 'firebase/firestore'
 import { computed } from 'vue'
+import { ViewMode } from '@/types'
 import { useRoute } from 'vue-router'
 import { useCollection, useDocument } from 'vuefire'
 
 const route = useRoute()
 const setlistId = route.params.id as string
 
-const displayMode = route.query.mode as 'lyrics' | 'chords' | 'drums'
+const displayMode = route.query.mode as ViewMode
 
 const setlistData = useDocument(doc(setlistCollection, setlistId))
 

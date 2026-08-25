@@ -18,3 +18,21 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 } 
+
+declare module 'soundtouchjs' {
+  /** Time-stretch / pitch-shift source node wrapping a decoded AudioBuffer. */
+  export class PitchShifter {
+    constructor(context: BaseAudioContext, buffer: AudioBuffer, bufferSize: number, onEnd?: () => void)
+    readonly duration: number
+    readonly timePlayed: number
+    percentagePlayed: number
+    tempo: number
+    rate: number
+    pitch: number
+    pitchSemitones: number
+    connect(node: AudioNode): void
+    disconnect(): void
+    on(event: 'play', cb: (detail: { timePlayed: number; percentagePlayed: number }) => void): void
+    off(event?: string): void
+  }
+}

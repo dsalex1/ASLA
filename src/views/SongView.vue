@@ -4,6 +4,7 @@ import FileViewer from '@/components/FileViewer.vue'
 import FullscreenLayout from '@/layouts/FullscreenLayout.vue'
 import { songCollection } from '@/plugins/firebase'
 import { computed } from 'vue'
+import { ViewMode } from '@/types'
 import { useRoute, useRouter } from 'vue-router'
 import { useCollection } from 'vuefire'
 
@@ -11,7 +12,7 @@ const route = useRoute()
 const router = useRouter()
 
 const songId = computed(() => route.params.id as string)
-const displayMode = route.query.mode as 'lyrics' | 'chords' | 'drums'
+const displayMode = route.query.mode as ViewMode
 
 const songsCollection = useCollection(songCollection)
 

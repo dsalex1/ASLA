@@ -5,7 +5,7 @@ import SongEdit from '@/components/SongEdit.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { HOME_ROUTE } from '@/router'
-import { Song } from '@/types'
+import { Song, ViewMode } from '@/types'
 import { useRecentSearches } from '@/composables/useRecentSearches'
 import { computed, ref } from 'vue'
 import { useCollection } from 'vuefire'
@@ -41,7 +41,7 @@ function formatDuration(duration?: number) {
   return duration ? `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}` : ''
 }
 
-function viewSong(song: Song, mode?: 'chords' | 'lyrics' | 'drums') {
+function viewSong(song: Song, mode?: ViewMode) {
   // Save current search to recent searches when user interacts with results
   if (songSearch.value && songSearch.value.trim().length >= 2) {
     addSearch(songSearch.value)
@@ -181,6 +181,11 @@ function editSong(song: Song) {
               <span v-bind="props">🥁</span>
             </template>
           </v-tooltip>
+          <v-tooltip text="Audio track available" v-if="item.audioTracks?.length">
+            <template #activator="{ props }">
+              <span v-bind="props">🎧</span>
+            </template>
+          </v-tooltip>
           <v-tooltip text="Moderation available" v-if="item.nadine_moderation">
             <template #activator="{ props }">
               <span v-bind="props">💬</span>
@@ -212,6 +217,15 @@ function editSong(song: Song) {
           >
             Drums
           </v-btn>
+          <v-btn
+            v-if="item.audioTracks?.length"
+            size="small"
+            color="warning"
+            variant="tonal"
+            @click="viewSong(item, 'audio')"
+          >
+            Audio
+          </v-btn>
         </div>
       </template>
     </v-data-table>
@@ -234,6 +248,7 @@ function editSong(song: Song) {
               <span v-if="song.filename || song.pdfStorageRef">🎼</span>
               <span v-if="song.lyrics">🎤</span>
               <span v-if="song.drumsPdfStorageRef">🥁</span>
+              <span v-if="song.audioTracks?.length">🎧</span>
               <span v-if="song.nadine_moderation">💬</span>
             </div>
             <v-btn
@@ -292,6 +307,16 @@ function editSong(song: Song) {
             >
               <v-icon size="small" icon="fas fa-drum" class="mr-1" />
               Drums
+            </v-btn>
+            <v-btn
+              v-if="song.audioTracks?.length"
+              size="small"
+              color="warning"
+              variant="tonal"
+              @click.stop="viewSong(song, 'audio')"
+            >
+              <v-icon size="small" icon="fas fa-headphones" class="mr-1" />
+              Audio
             </v-btn>
           </div>
         </v-card-text>
