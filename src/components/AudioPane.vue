@@ -5,9 +5,9 @@ import { useAudioEngine } from '@/composables/useAudioEngine'
 import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song } from '@/types'
-import { useDebounceFn } from '@vueuse/core'
+import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   song: Song
@@ -29,7 +29,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, loopA, loopB } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, volume, outputDevice, loopA, loopB } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
@@ -135,6 +135,32 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   }
 }
 
+const NUDGE = 0.1 // seconds a single arrow press moves a loop point
+
+/** which end the arrows move: 'a', 'b', or both at once keeping the length */
+const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
+
+const hasLoop = computed(() => loopA.value != null && loopB.value != null)
+
+function nudgeLoop(direction: -1 | 1) {
+  const delta = direction * NUDGE
+  if (loopTarget.value != 'b' && loopA.value != null) loopA.value = Math.max(0, loopA.value + delta)
+  if (loopTarget.value != 'a' && loopB.value != null) loopB.value = Math.min(trackDuration.value, loopB.value + delta)
+  keepLoopOrdered()
+}
+
+/** halve or double the selection, keeping A where it is */
+function scaleLoop(factor: number) {
+  if (loopA.value == null || loopB.value == null) return
+  loopB.value = Math.min(trackDuration.value, loopA.value + (loopB.value - loopA.value) * factor)
+  keepLoopOrdered()
+}
+
+// a nudge or a scale must never leave B at or before A
+function keepLoopOrdered() {
+  if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value) loopA.value = Math.max(0, loopB.value - NUDGE)
+}
+
 function clearLoop() {
   loopA.value = null
   loopB.value = null
@@ -175,6 +201,45 @@ const tempoJogRange = computed(() =>
     : { step: 0.01, min: MIN_TEMPO, max: MAX_TEMPO }
 )
 const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
+
+// --- volume and output device: a property of this device, not of the song ---
+const MAX_VOLUME = 2
+
+// no web API can reach the system volume, so this is the app's own gain stage
+const storedVolume = useLocalStorage('audio.volume', 1)
+const storedOutput = useLocalStorage('audio.output', '')
+volume.value = storedVolume.value
+outputDevice.value = storedOutput.value
+watch(volume, (v) => (storedVolume.value = v))
+watch(outputDevice, (v) => (storedOutput.value = v))
+
+const adjustVolume = (delta: number) => (volume.value = Math.round(Math.max(0, Math.min(MAX_VOLUME, volume.value + delta)) * 100) / 100)
+
+const outputs = ref<MediaDeviceInfo[]>([])
+
+async function loadOutputs() {
+  if (!engine.canPickOutput || !navigator.mediaDevices?.enumerateDevices) return
+  outputs.value = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind == 'audiooutput')
+}
+
+// device labels stay blank until something has been granted mic access, so the picker
+// offers to ask for it rather than listing a row of unnamed devices
+const outputsNamed = computed(() => outputs.value.some((d) => d.label))
+
+async function nameOutputs() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    stream.getTracks().forEach((t) => t.stop())
+    await loadOutputs()
+  } catch {
+    /* declined: the default device still works, it just has no name */
+  }
+}
+
+onMounted(() => {
+  loadOutputs()
+  navigator.mediaDevices?.addEventListener?.('devicechange', loadOutputs)
+})
 
 const hasAudio = computed(() => !!track.value)
 const trackDuration = computed(() => duration.value || track.value?.duration || 0)
@@ -255,6 +320,27 @@ defineExpose({ position: currentTime })
         <button class="tbtn tbtn--glyph" aria-label="Pitch up" @click="adjustPitch(1)">♯</button>
       </div>
 
+      <div class="group">
+        <button class="tbtn" aria-label="Quieter" @click="adjustVolume(-0.05)"><i class="fas fa-volume-low" /></button>
+        <JogStrip
+          v-model="volume"
+          :step="0.01"
+          :min="0"
+          :max="MAX_VOLUME"
+          :resetTo="1"
+          :label="`${Math.round(volume * 100)}%`"
+          sub="vol"
+        />
+        <button class="tbtn" aria-label="Louder" @click="adjustVolume(0.05)"><i class="fas fa-volume-high" /></button>
+        <select v-if="engine.canPickOutput" v-model="outputDevice" class="track-picker" aria-label="Audio output" @focus="loadOutputs">
+          <option value="">System default</option>
+          <option v-for="d in outputs" :key="d.deviceId" :value="d.deviceId">{{ d.label || 'Unnamed output' }}</option>
+        </select>
+        <button v-if="engine.canPickOutput && !outputsNamed" class="tbtn" aria-label="Name audio outputs" @click="nameOutputs">
+          <i class="fas fa-tag" />
+        </button>
+      </div>
+
       <span class="stamp">-{{ stamp(trackDuration - currentTime) }}</span>
     </div>
 
@@ -285,6 +371,23 @@ defineExpose({ position: currentTime })
           <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
           <button class="tbtn" aria-label="Clear A-B" @click="clearLoop"><i class="fas fa-times" /></button>
           <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
+        </div>
+
+        <div class="group">
+          <button
+            v-for="t in (['a', 'ab', 'b'] as const)"
+            :key="t"
+            class="tbtn"
+            :class="{ 'tbtn--on': loopTarget == t }"
+            :aria-label="{ a: 'Move A', ab: 'Move A and B', b: 'Move B' }[t]"
+            @click="loopTarget = t"
+          >
+            {{ { a: 'A', ab: '⇄', b: 'B' }[t] }}
+          </button>
+          <button class="tbtn" aria-label="Nudge left" :disabled="!hasLoop" @click="nudgeLoop(-1)"><i class="fas fa-arrow-left" /></button>
+          <button class="tbtn" aria-label="Nudge right" :disabled="!hasLoop" @click="nudgeLoop(1)"><i class="fas fa-arrow-right" /></button>
+          <button class="tbtn" aria-label="Halve selection" :disabled="!hasLoop" @click="scaleLoop(0.5)">½</button>
+          <button class="tbtn" aria-label="Double selection" :disabled="!hasLoop" @click="scaleLoop(2)">x2</button>
         </div>
 
         <div class="group group--centre">
