@@ -219,12 +219,14 @@ const outputs = ref<MediaDeviceInfo[]>([])
 
 async function loadOutputs() {
   if (!engine.canPickOutput || !navigator.mediaDevices?.enumerateDevices) return
-  outputs.value = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind == 'audiooutput')
+  // before permission is granted Chrome reports one placeholder device with a blank id;
+  // it is just the default output again, so it is dropped rather than shown twice
+  outputs.value = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind == 'audiooutput' && d.deviceId)
 }
 
 // device labels stay blank until something has been granted mic access, so the picker
 // offers to ask for it rather than listing a row of unnamed devices
-const outputsNamed = computed(() => outputs.value.some((d) => d.label))
+const outputsNamed = computed(() => outputs.value.length > 0 && outputs.value.every((d) => d.label))
 
 async function nameOutputs() {
   try {
