@@ -361,3 +361,53 @@ describe('AudioPane persistence', () => {
     expect(written.audioTracks[0]).not.toHaveProperty('loopB')
   })
 })
+
+describe('AudioPane A-B move', () => {
+  const loop = () => [engine.loopA.value, engine.loopB.value]
+  const round = () => loop().map((v) => (v == null ? v : Math.round(v * 100) / 100))
+
+  it('nudges both ends at once by default, keeping the length', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect(round()).toEqual([10.1, 20.1])
+    await button(wrapper, 'Nudge left').trigger('click')
+    await button(wrapper, 'Nudge left').trigger('click')
+    expect(round()).toEqual([9.9, 19.9])
+  })
+
+  it('moves only the selected end', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Move A').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect(round()).toEqual([10.1, 20])
+
+    await button(wrapper, 'Move B').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect(round()).toEqual([10.1, 20.1])
+  })
+
+  it('halves and doubles the selection from A', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Halve selection').trigger('click')
+    expect(loop()).toEqual([10, 15])
+    await button(wrapper, 'Double selection').trigger('click')
+    expect(loop()).toEqual([10, 20])
+  })
+
+  it('clamps the selection to the track and never lets B pass A', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 90, duration: 100 })])
+    await button(wrapper, 'Double selection').trigger('click')
+    expect(loop()).toEqual([10, 100])
+
+    await button(wrapper, 'Move B').trigger('click')
+    engine.loopB.value = 10.05
+    await button(wrapper, 'Nudge left').trigger('click')
+    expect(engine.loopB.value).toBeGreaterThan(engine.loopA.value!)
+  })
+
+  it('disables the move buttons until both ends are set', async () => {
+    const wrapper = await mountPane([track()])
+    for (const label of ['Nudge left', 'Nudge right', 'Halve selection', 'Double selection'])
+      expect(button(wrapper, label).attributes('disabled')).toBeDefined()
+  })
+})
