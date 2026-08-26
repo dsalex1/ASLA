@@ -16,8 +16,6 @@ const engine = {
   tempo: ref(1),
   pitch: ref(0),
   gainDb: ref(0),
-  outputDevice: ref(''),
-  canPickOutput: false,
   loopA: ref<number | null>(null),
   loopB: ref<number | null>(null),
   load: vi.fn(() => Promise.resolve()),
@@ -25,7 +23,14 @@ const engine = {
   pause: vi.fn(),
   toggle: vi.fn(),
   seek: vi.fn((t: number) => (engine.currentTime.value = t)),
-  levels: vi.fn(() => ({ pre: 0.8, post: 0.5, reduction: -4 })),
+  // one sample per peak bucket, so a sample's index is the bucket it belongs in
+  levels: vi.fn(() => ({
+    pre: new Float32Array([0.1, 0.2, 0.3, 0.8]),
+    post: new Float32Array([0.1, 0.2, 0.3, 0.5]),
+    sampleRate: 100,
+    latency: 0,
+    reduction: -4,
+  })),
   skip: vi.fn(),
 }
 vi.mock('@/composables/useAudioEngine', () => ({ useAudioEngine: () => engine }))
@@ -457,30 +462,58 @@ describe('AudioPane level monitoring', () => {
     expect(canvas(wrapper).props('gainTrail')).toBeInstanceOf(Float32Array)
   })
 
-  it('records the measured levels at the playhead while playing', async () => {
+  it('places every sample at the position it was played at, not one reading per frame', async () => {
     const wrapper = await mountPane()
     await button(wrapper, 'Monitor levels').trigger('click')
     engine.playing.value = true
     engine.currentTime.value = 2
     await flushPromises()
 
+    // the window ends at the playhead, so its last sample lands on 2s and the rest behind
     const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    expect(trail[200]).toBeCloseTo(0.8) // 2s at 100 buckets per second
+    ;[0.1, 0.2, 0.3, 0.8].forEach((v, i) => expect(trail[197 + i]).toBeCloseTo(v))
     expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBeCloseTo(0.5)
     expect(canvas(wrapper).props('reduction')).toBe(-4)
   })
 
-  it('fills the buckets a single frame skipped over', async () => {
+  it('shifts the window back by the latency the engine reports', async () => {
+    engine.levels.mockReturnValueOnce({ ...engine.levels(), latency: 0.02 })
     const wrapper = await mountPane()
     await button(wrapper, 'Monitor levels').trigger('click')
     engine.playing.value = true
-    engine.currentTime.value = 1
+    engine.currentTime.value = 2
     await flushPromises()
-    engine.currentTime.value = 1.05 // five buckets on from the last frame
+
+    // two buckets of latency, so the loudest sample belongs at 1.98s rather than 2s
+    const trail = canvas(wrapper).props('gainTrail') as Float32Array
+    expect(trail[198]).toBeCloseTo(0.8)
+    expect(trail[200]).toBe(0)
+  })
+
+  it('stretches the window over more track time as the tempo rises', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.tempo.value = 2
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // a second of audio now covers two seconds of track, so the samples spread out
+    const trail = canvas(wrapper).props('gainTrail') as Float32Array
+    expect(trail[200]).toBeCloseTo(0.8)
+    expect(trail[198]).toBeCloseTo(0.3)
+    expect(trail[196]).toBeCloseTo(0.2)
+  })
+
+  it('ignores samples from before the start of the track', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 0.01
     await flushPromises()
 
     const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    expect([...trail.slice(101, 106)].every((v) => v > 0)).toBe(true)
+    ;[0.3, 0.8].forEach((v, i) => expect(trail[i]).toBeCloseTo(v))
   })
 
   it('starts the trail over when the gain changes, since old levels no longer apply', async () => {

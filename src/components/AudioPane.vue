@@ -8,7 +8,7 @@ import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song } from '@/types'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   song: Song
@@ -30,7 +30,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, outputDevice, loopA, loopB } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
@@ -206,12 +206,9 @@ const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
 
 // --- level trim: no web API reaches the system volume, so this is the app's own gain
 // stage. It belongs to the track, which is the point: it evens out backing tracks that
-// were mastered at different levels. The output device, by contrast, is this device's. ---
+// were mastered at different levels. ---
 const GAIN_LIMIT = 20 // dB either way
 
-const storedOutput = useLocalStorage('audio.output', '')
-outputDevice.value = storedOutput.value
-watch(outputDevice, (v) => (storedOutput.value = v))
 
 const adjustGain = (delta: number) =>
   (gainDb.value = Math.round(Math.max(-GAIN_LIMIT, Math.min(GAIN_LIMIT, gainDb.value + delta)) * 100) / 100)
@@ -219,33 +216,6 @@ const adjustGain = (delta: number) =>
 const gainLabel = computed(() => `${gainDb.value > 0 ? '+' : ''}${gainDb.value.toFixed(2)} dB`)
 const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100)}%`)
 
-const outputs = ref<MediaDeviceInfo[]>([])
-
-async function loadOutputs() {
-  if (!engine.canPickOutput || !navigator.mediaDevices?.enumerateDevices) return
-  // before permission is granted Chrome reports one placeholder device with a blank id;
-  // it is just the default output again, so it is dropped rather than shown twice
-  outputs.value = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind == 'audiooutput' && d.deviceId)
-}
-
-// device labels stay blank until something has been granted mic access, so the picker
-// offers to ask for it rather than listing a row of unnamed devices
-const outputsNamed = computed(() => outputs.value.length > 0 && outputs.value.every((d) => d.label))
-
-async function nameOutputs() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    stream.getTracks().forEach((t) => t.stop())
-    await loadOutputs()
-  } catch {
-    /* declined: the default device still works, it just has no name */
-  }
-}
-
-onMounted(() => {
-  loadOutputs()
-  navigator.mediaDevices?.addEventListener?.('devicechange', loadOutputs)
-})
 
 // --- level monitoring: what the gain and the limiter are actually doing, measured off
 // the live signal and painted onto the waveform as the track plays ---
@@ -259,28 +229,41 @@ function resetTrails() {
   gainTrail.value = new Float32Array(buckets)
   outTrail.value = new Float32Array(buckets)
   reduction.value = 0
-  lastBucket = -1
 }
 
 // a trail measured at one gain says nothing about another, so changing it starts over
 watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails())
 
-let lastBucket = -1
+/**
+ * Each sample in the window is placed at the position it was actually played at, so the
+ * trail lands on the same time axis as the waveform underneath it and carries the
+ * waveform's own resolution rather than one reading per animation frame.
+ *
+ * A frame covers ~17 ms of wall clock and the window holds ~43 ms, so every bucket is
+ * measured even at high tempo, where each real second covers several track seconds.
+ */
+function record(trail: Float32Array, samples: Float32Array, endsAt: number, trackSecondsPerSample: number) {
+  for (let i = samples.length - 1; i >= 0; i--) {
+    const bucket = Math.round((endsAt - (samples.length - 1 - i) * trackSecondsPerSample) * PEAKS_PER_SECOND)
+    if (bucket < 0) break // wound back past the start of the track
+    if (bucket >= trail.length) continue
+    const level = Math.abs(samples[i])
+    if (level > trail[bucket]) trail[bucket] = level
+  }
+}
 
 // currentTime advances once per animation frame while playing, which is exactly when
 // there is a fresh window of samples to measure
 watch(currentTime, (at) => {
   if (!monitor.value || !playing.value || !gainTrail.value || !outTrail.value) return
-  const { pre, post, reduction: gr } = engine.levels()
+  const { pre, post, sampleRate, latency, reduction: gr } = engine.levels()
   reduction.value = gr
-  const bucket = Math.min(Math.round(at * PEAKS_PER_SECOND), gainTrail.value.length - 1)
-  // one frame can span several buckets, more so at high tempo, so fill the gap behind it
-  const from = lastBucket >= 0 && bucket - lastBucket <= PEAKS_PER_SECOND ? lastBucket + 1 : bucket
-  for (let i = Math.min(from, bucket); i <= bucket; i++) {
-    gainTrail.value[i] = Math.max(gainTrail.value[i], pre)
-    outTrail.value[i] = Math.max(outTrail.value[i], post)
-  }
-  lastBucket = bucket
+  // the window is already behind the playhead, and tempo decides how much track time a
+  // second of it covers
+  const endsAt = at - latency * tempo.value
+  const trackSecondsPerSample = tempo.value / sampleRate
+  record(gainTrail.value, pre, endsAt, trackSecondsPerSample)
+  record(outTrail.value, post, endsAt, trackSecondsPerSample)
 })
 
 const hasAudio = computed(() => !!track.value)
@@ -327,6 +310,17 @@ defineExpose({ position: currentTime })
       <div v-if="view != 'waveform'" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
         <slot name="view" :position="currentTime" :playing="playing" />
       </div>
+      <button
+        v-if="hasAudio && view == 'waveform'"
+        class="monitor-toggle"
+        :class="{ 'monitor-toggle--on': monitor }"
+        aria-label="Monitor levels"
+        title="Show measured levels on the waveform"
+        @click="monitor = !monitor"
+      >
+        <i class="fas fa-chart-simple" />
+      </button>
+
       <div v-if="loading || error" class="loading-badge">{{ error || 'Loading audio…' }}</div>
     </div>
 
@@ -377,13 +371,6 @@ defineExpose({ position: currentTime })
           :sub="gainPercent"
         />
         <button class="tbtn" aria-label="Louder" @click="adjustGain(0.1)"><i class="fas fa-volume-high" /></button>
-        <select v-if="engine.canPickOutput" v-model="outputDevice" class="track-picker" aria-label="Audio output" @focus="loadOutputs">
-          <option value="">System default</option>
-          <option v-for="d in outputs" :key="d.deviceId" :value="d.deviceId">{{ d.label || 'Unnamed output' }}</option>
-        </select>
-        <button v-if="engine.canPickOutput && !outputsNamed" class="tbtn" aria-label="Name audio outputs" @click="nameOutputs">
-          <i class="fas fa-tag" />
-        </button>
       </div>
 
       <span class="stamp">-{{ stamp(trackDuration - currentTime) }}</span>
@@ -446,16 +433,6 @@ defineExpose({ position: currentTime })
         </div>
       </template>
 
-      <button
-        v-if="hasAudio"
-        class="tbtn"
-        :class="{ 'tbtn--on': monitor }"
-        aria-label="Monitor levels"
-        title="Show measured levels on the waveform"
-        @click="monitor = !monitor"
-      >
-        <i class="fas fa-chart-simple" />
-      </button>
 
       <div class="group group--side segmented">
         <button
@@ -600,6 +577,28 @@ defineExpose({ position: currentTime })
 
 .no-audio {
   font-size: 13px;
+}
+
+.monitor-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+}
+.monitor-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ddd;
+}
+.monitor-toggle--on {
+  background: rgba(61, 220, 132, 0.18);
+  color: #3ddc84;
 }
 
 .loading-badge {

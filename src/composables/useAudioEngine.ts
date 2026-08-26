@@ -19,7 +19,6 @@ export function useAudioEngine() {
   const loopA = ref<number | null>(null)
   const loopB = ref<number | null>(null)
   const gainDb = ref(0)
-  const outputDevice = ref('')
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
@@ -65,20 +64,6 @@ export function useAudioEngine() {
     return gain
   }
 
-  /**
-   * Only Chromium implements AudioContext.setSinkId, and only over https or localhost;
-   * elsewhere the picker is hidden and playback stays on the system default.
-   */
-  const canPickOutput = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype
-
-  async function applySink(id: string) {
-    if (!canPickOutput) return
-    try {
-      await (audioContext() as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(id)
-    } catch (e) {
-      console.error('Failed to switch audio output:', e)
-    }
-  }
 
   function teardownShifter() {
     shifter?.disconnect()
@@ -166,18 +151,29 @@ export function useAudioEngine() {
 
   const toggle = () => (playing.value ? pause() : play())
 
-  const tapBuffer = new Float32Array(TAP_WINDOW)
+  const preSamples = new Float32Array(TAP_WINDOW)
+  const postSamples = new Float32Array(TAP_WINDOW)
 
-  function peakOf(tap: AnalyserNode | null) {
-    if (!tap) return 0
-    tap.getFloatTimeDomainData(tapBuffer)
-    let peak = 0
-    for (const v of tapBuffer) if (Math.abs(v) > peak) peak = Math.abs(v)
-    return peak
+  /**
+   * The most recent window of audio from either side of the limiter, as samples rather
+   * than one peak: a caller that knows where the playhead is can place every sample at
+   * the moment it belongs to, instead of smearing the whole window over one instant.
+   *
+   * `latency` is how far behind the playhead that window sits. The pitch shifter is a
+   * ScriptProcessor, so what it computed for a given position only reaches the graph a
+   * whole buffer later, and that offset is what would otherwise drag the readings late.
+   */
+  function levels() {
+    preTap?.getFloatTimeDomainData(preSamples)
+    postTap?.getFloatTimeDomainData(postSamples)
+    return {
+      pre: preSamples,
+      post: postSamples,
+      sampleRate: context?.sampleRate ?? 48000,
+      latency: BUFFER_SIZE / (context?.sampleRate ?? 48000),
+      reduction: limiter?.reduction ?? 0,
+    }
   }
-
-  /** loudest sample since the last call, either side of the limiter, 0..1 */
-  const levels = () => ({ pre: peakOf(preTap), post: peakOf(postTap), reduction: limiter?.reduction ?? 0 })
 
   const seekShifter = (seconds: number) => {
     if (shifter && duration.value) shifter.percentagePlayed = seconds / duration.value
@@ -200,7 +196,6 @@ export function useAudioEngine() {
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
   // ramped rather than set, so dragging the trim does not click
   watch(gainDb, (v) => gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01))
-  watch(outputDevice, applySink)
 
   onUnmounted(() => {
     teardownShifter()
@@ -213,7 +208,7 @@ export function useAudioEngine() {
   })
 
   return {
-    currentTime, duration, playing, loading, error, tempo, pitch, gainDb, outputDevice, canPickOutput,
+    currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
     loopA, loopB, load, play, pause, toggle, seek, skip, levels,
   }
 }
