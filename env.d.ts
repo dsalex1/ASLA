@@ -15,6 +15,9 @@ interface ImportMetaEnv {
   readonly VITE_BASE_URL: string
 }
 
+/** the version from package.json, the one place it is written down */
+declare const __APP_VERSION__: string
+
 /** which beta upload this is: '2', '3', ... and empty in any other build */
 declare const __BETA_BUILD__: string
 

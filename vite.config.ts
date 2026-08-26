@@ -7,6 +7,8 @@ import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { transformAssetUrls } from 'vite-plugin-vuetify'
 
+const { version } = createRequire(import.meta.url)('./package.json')
+
 // in a git worktree node_modules resolves to the main checkout, outside vite's
 // default fs allow list — allow the actually-resolved node_modules dir too
 const nodeModulesDir = resolve(
@@ -57,6 +59,7 @@ export default ({ mode }: { mode: string }) => {
     // stamped by scripts/deployBeta.mjs and deliberately not committed, so each beta
     // upload is identifiable without a source change
     define: {
+      __APP_VERSION__: JSON.stringify(version),
       __BETA_BUILD__: JSON.stringify(process.env.BETA_BUILD ?? ''),
     },
     resolve: {

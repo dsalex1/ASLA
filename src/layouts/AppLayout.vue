@@ -7,7 +7,7 @@ const auth = useAuth()
 
 // the beta tag belongs to the beta channel only: a production build stamps nothing and
 // shows the bare version
-const version = `V0.0.21${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` : ''}`
+const version = `V${__APP_VERSION__}${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` : ''}`
 </script>
 <template>
   <v-app>

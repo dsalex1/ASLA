@@ -5,6 +5,10 @@
  * repository in a temp dir, so no build artifacts ever land on this branch and
  * the beta repo never accumulates history nobody reads.
  *
+ * The version comes from package.json and must already be ahead of master: the workflow
+ * is to bump it in the first commit of a branch, so every beta of an unreleased version
+ * is numbered from 1 and a forgotten bump is caught here rather than on the phone.
+ *
  * Prerequisites, both one-off:
  *   1. an empty GitHub repo whose name matches VITE_BASE_URL in .env.beta
  *   2. that repo's Settings > Pages set to branch `master`, folder `/docs`
@@ -27,13 +31,23 @@ const repoName = base.replace(/\//g, '')
 const origin = capture('git', ['remote', 'get-url', 'origin'])
 const remote = process.env.BETA_REMOTE ?? origin.replace(/[^/]+?(\.git)?$/, `${repoName}.git`)
 
-// The counter lives in an untracked file so the version bump never becomes a commit.
-// It starts at 2: the first beta upload was the plain `-beta` build.
-const COUNTER = '.beta-build'
-const build = (existsSync(COUNTER) ? Number(readFileSync(COUNTER, 'utf8')) : 1) + 1
-writeFileSync(COUNTER, String(build))
+const { version } = JSON.parse(readFileSync('package.json', 'utf8'))
 
-console.log(`building beta ${build} for ${base}`)
+// A beta that carries master's version is indistinguishable from production once it is
+// on the phone, which is the whole thing this numbering exists to prevent.
+run('git', ['fetch', '-q', 'origin', 'master'])
+const released = JSON.parse(capture('git', ['show', 'origin/master:package.json'])).version
+if (version === released)
+  throw new Error(`package.json is still ${version}, the version already on master. Bump it before deploying a beta.`)
+
+// The counter lives in an untracked file so the version bump never becomes a commit, and
+// it is keyed to the version so each unreleased version counts from 1.
+const COUNTER = '.beta-build'
+const [countedFor, count] = existsSync(COUNTER) ? readFileSync(COUNTER, 'utf8').trim().split(/\s+/) : []
+const build = countedFor === version ? Number(count) + 1 : 1
+writeFileSync(COUNTER, `${version} ${build}`)
+
+console.log(`building ${version}-beta${build} for ${base}`)
 process.env.BETA_BUILD = String(build)
 run('npm', ['run', 'build:beta'])
 if (!existsSync('dist-beta/index.html')) throw new Error('build produced no dist-beta/index.html')
@@ -46,7 +60,7 @@ try {
 
   run('git', ['init', '-q', '-b', 'master'], staging)
   run('git', ['add', '-A'], staging)
-  run('git', ['commit', '-q', '-m', `beta ${build} from ${capture('git', ['rev-parse', '--short', 'HEAD'])}`], staging)
+  run('git', ['commit', '-q', '-m', `${version}-beta${build} from ${capture('git', ['rev-parse', '--short', 'HEAD'])}`], staging)
   run('git', ['push', '-q', '--force', remote, 'master'], staging)
   console.log(`\npublished beta ${build} to https://${remote.split('/').at(-2)}.github.io/${repoName}/`)
 } finally {
