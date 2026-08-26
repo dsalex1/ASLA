@@ -14,8 +14,10 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' })
-const capture = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', shell: process.platform === 'win32' }).trim()
+// only npm needs a shell on Windows (it is a .cmd); running git through one would
+// re-split arguments and break the commit message
+const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: cmd === 'npm' && process.platform === 'win32' })
+const capture = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' }).trim()
 
 const base = (readFileSync('.env.beta', 'utf8').match(/^VITE_BASE_URL=(.+)$/m) ?? [])[1]
 if (!base) throw new Error('VITE_BASE_URL missing from .env.beta')
