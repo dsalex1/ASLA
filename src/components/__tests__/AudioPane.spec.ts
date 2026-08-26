@@ -25,7 +25,6 @@ const engine = {
   seek: vi.fn((t: number) => (engine.currentTime.value = t)),
   // one sample per peak bucket, so a sample's index is the bucket it belongs in
   levels: vi.fn(() => ({
-    pre: new Float32Array([0.1, 0.2, 0.3, 0.8]),
     post: new Float32Array([0.1, 0.2, 0.3, 0.5]),
     sampleRate: 100,
     latency: 0,
@@ -454,12 +453,16 @@ describe('AudioPane level trim', () => {
 describe('AudioPane level monitoring', () => {
   const canvas = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(WaveformCanvas)
 
-  it('passes no trails until monitoring is switched on', async () => {
-    const wrapper = await mountPane()
-    expect(canvas(wrapper).props('gainTrail')).toBe(null)
+  it('tells the canvas to monitor, and hands it the gain to draw', async () => {
+    const wrapper = await mountPane([track({ gainDb: 6 })])
+    expect(canvas(wrapper).props('monitor')).toBe(false)
+    expect(canvas(wrapper).props('headroomDb')).toBe(0)
 
     await button(wrapper, 'Monitor levels').trigger('click')
-    expect(canvas(wrapper).props('gainTrail')).toBeInstanceOf(Float32Array)
+    expect(canvas(wrapper).props('monitor')).toBe(true)
+    expect(canvas(wrapper).props('gainDb')).toBe(6)
+    // headroom only while monitoring, so the wave keeps the full height otherwise
+    expect(canvas(wrapper).props('headroomDb')).toBe(6)
   })
 
   it('places every sample at the position it was played at, not one reading per frame', async () => {
@@ -470,9 +473,8 @@ describe('AudioPane level monitoring', () => {
     await flushPromises()
 
     // the window ends at the playhead, so its last sample lands on 2s and the rest behind
-    const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    ;[0.1, 0.2, 0.3, 0.8].forEach((v, i) => expect(trail[197 + i]).toBeCloseTo(v))
-    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBeCloseTo(0.5)
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    ;[0.1, 0.2, 0.3, 0.5].forEach((v, i) => expect(trail[197 + i]).toBeCloseTo(v))
     expect(canvas(wrapper).props('reduction')).toBe(-4)
   })
 
@@ -485,8 +487,8 @@ describe('AudioPane level monitoring', () => {
     await flushPromises()
 
     // two buckets of latency, so the loudest sample belongs at 1.98s rather than 2s
-    const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    expect(trail[198]).toBeCloseTo(0.8)
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    expect(trail[198]).toBeCloseTo(0.5)
     expect(trail[200]).toBe(0)
   })
 
@@ -499,8 +501,8 @@ describe('AudioPane level monitoring', () => {
     await flushPromises()
 
     // a second of audio now covers two seconds of track, so the samples spread out
-    const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    expect(trail[200]).toBeCloseTo(0.8)
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    expect(trail[200]).toBeCloseTo(0.5)
     expect(trail[198]).toBeCloseTo(0.3)
     expect(trail[196]).toBeCloseTo(0.2)
   })
@@ -512,8 +514,22 @@ describe('AudioPane level monitoring', () => {
     engine.currentTime.value = 0.01
     await flushPromises()
 
-    const trail = canvas(wrapper).props('gainTrail') as Float32Array
-    ;[0.3, 0.8].forEach((v, i) => expect(trail[i]).toBeCloseTo(v))
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    ;[0.3, 0.5].forEach((v, i) => expect(trail[i]).toBeCloseTo(v))
+  })
+
+  it('records the gain reduction across the window the reading covers', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // reduction is reported as a negative dB figure and stored as a depth
+    const curve = canvas(wrapper).props('reductionTrail') as Float32Array
+    expect(curve[200]).toBe(4)
+    expect(curve[198]).toBe(4)
+    expect(curve[210]).toBe(0) // nothing written ahead of the playhead
   })
 
   it('starts the trail over when the gain changes, since old levels no longer apply', async () => {
@@ -522,10 +538,10 @@ describe('AudioPane level monitoring', () => {
     engine.playing.value = true
     engine.currentTime.value = 2
     await flushPromises()
-    expect((canvas(wrapper).props('gainTrail') as Float32Array)[200]).toBeGreaterThan(0)
+    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBeGreaterThan(0)
 
     await button(wrapper, 'Louder').trigger('click')
     await flushPromises()
-    expect((canvas(wrapper).props('gainTrail') as Float32Array)[200]).toBe(0)
+    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBe(0)
   })
 })

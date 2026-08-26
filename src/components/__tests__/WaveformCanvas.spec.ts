@@ -309,15 +309,6 @@ describe('WaveformCanvas interaction', () => {
 })
 
 describe('WaveformCanvas level monitoring', () => {
-  // half the track measured at -6 dB after the gain, held to -12 dB by the limiter
-  const trails = () => {
-    const gainTrail = new Float32Array(DURATION * 100)
-    const outTrail = new Float32Array(DURATION * 100)
-    gainTrail.fill(0.5, 0, DURATION * 50)
-    outTrail.fill(0.25, 0, DURATION * 50)
-    return { gainTrail, outTrail }
-  }
-
   /** the points of each path that was stroked in the given colour */
   const strokedPaths = (color: string) => {
     const paths: { x: number; y: number }[][] = []
@@ -329,59 +320,77 @@ describe('WaveformCanvas level monitoring', () => {
     }
     return paths
   }
+  const filled = (color: string) => ctx.calls.filter((c) => c[0] === 'fill' && c[1] === color).length
 
-  it('draws nothing extra until both trails are supplied', async () => {
-    await render({})
-    expect(callsOf('stroke').map((c) => c[1])).not.toContain('#ff6b3d')
+  it('draws none of the monitoring layers until it is switched on', async () => {
+    await render({ gainDb: 6 })
+    expect(filled('#ff6b3d')).toBe(0)
+    expect(strokedPaths('#5ad07a')).toHaveLength(0)
   })
 
-  it('strokes each trail in its own colour', async () => {
-    await render({ ...trails() })
-    const strokes = callsOf('stroke').map((c) => c[1])
-    expect(strokes).toContain('#ff6b3d') // after the gain
-    expect(strokes).toContain('#3ddc84') // what actually leaves
+  it('draws the gain as a stretch of the source, with no playing needed', async () => {
+    await render({ monitor: true, gainDb: 6, headroomDb: 6 })
+    expect(filled('#ff6b3d')).toBe(1)
+
+    // +6 dB is twice the amplitude, and 6 dB of headroom puts that at the very edge
+    const boosted = ctx.calls.filter((c) => c[0] === 'lineTo').map((c) => c[2] as number)
+    expect(Math.min(...boosted)).toBe(0)
   })
 
-  it('mirrors a trail around the centre at its measured amplitude', async () => {
-    await render({ ...trails() })
-    const [top, bottom] = strokedPaths('#ff6b3d')
-    // 0.5 of full scale, so a quarter of the height either side of the middle
-    expect(top.every((p) => Math.abs(p.y - HEIGHT / 4) < 1)).toBe(true)
-    expect(bottom.every((p) => Math.abs(p.y - (HEIGHT * 3) / 4) < 1)).toBe(true)
+  it('keeps a cut gain on top, where the smaller shape can still be seen', async () => {
+    const order = async (gainDb: number) => {
+      // a fresh recorder, so the previous render's calls are not counted twice
+      ctx = recordingContext()
+      HTMLCanvasElement.prototype.getContext = vi.fn(() => ctx) as never
+      await render({ monitor: true, gainDb })
+      return ctx.calls.filter((c) => c[0] === 'fill').map((c) => c[1])
+    }
+    expect((await order(6)).slice(0, 2)).toEqual(['#ff6b3d', '#dcdcdc'])
+    expect((await order(-6)).slice(0, 2)).toEqual(['#dcdcdc', '#ff6b3d'])
   })
 
-  it('holds the limited trail below the one feeding it', async () => {
-    await render({ ...trails() })
-    const [gainTop] = strokedPaths('#ff6b3d')
-    const [outTop] = strokedPaths('#3ddc84')
-    expect(Math.min(...outTop.map((p) => p.y))).toBeGreaterThan(Math.max(...gainTop.map((p) => p.y)))
+  it('leaves headroom above 0 dBFS so what is driven past it stays visible', async () => {
+    await render({ monitor: true, headroomDb: 6 })
+    // with 6 dB of headroom, 0 dBFS sits half way up rather than on the edge
+    const zero = callsOf('fillText').find((c) => c[1] === '0')
+    expect(Math.round(zero![3] as number)).toBe(HEIGHT / 4 + 11)
   })
 
-  it('leaves unplayed stretches blank instead of drawing them at zero', async () => {
-    await render({ ...trails() })
-    const xs = strokedPaths('#ff6b3d').flat().map((p) => p.x)
-    expect(Math.max(...xs)).toBeLessThan(WIDTH / 2 + 2) // the unplayed half is untouched
+  it('rules the ceiling the limiter holds to', async () => {
+    await render({ monitor: true, headroomDb: 6 })
+    const ys = strokedPaths('#5ad07a').map((p) => p[0].y).sort((a, b) => a - b)
+    // -1 dBFS, one rule either side of the middle
+    expect(ys[0]).toBeGreaterThan(0)
+    expect(ys[0]).toBeLessThan(HEIGHT / 2)
+    expect(ys[1]).toBeCloseTo(HEIGHT - ys[0], 0)
   })
 
-  it('pins a trail that goes over full scale to the edge rather than off-canvas', async () => {
-    const gainTrail = new Float32Array(DURATION * 100).fill(2.5)
-    const outTrail = new Float32Array(DURATION * 100).fill(0.9)
-    await render({ gainTrail, outTrail })
-    const [top, bottom] = strokedPaths('#ff6b3d')
-    expect(top.every((p) => p.y === 0)).toBe(true)
-    expect(bottom.every((p) => p.y === HEIGHT)).toBe(true)
+  it('hangs the gain reduction curve from the top edge', async () => {
+    const reductionTrail = new Float32Array(DURATION * 100)
+    reductionTrail.fill(12, 0, DURATION * 50) // 12 dB of limiting over the first half
+    await render({ monitor: true, reductionTrail })
+    const [curve] = strokedPaths('#f2f2f2')
+    // half of the 24 dB range, so half way down the top half
+    expect(curve[0].y).toBeCloseTo(HEIGHT / 4, 0)
+    expect(curve.at(-1)!.y).toBe(0) // nothing measured yet in the second half
   })
 
-  it('reports the live gain reduction alongside the legend', async () => {
-    await render({ ...trails(), reduction: -6.25 })
+  it('strokes the measured output in its own colour', async () => {
+    const outTrail = new Float32Array(DURATION * 100).fill(0.5)
+    await render({ monitor: true, outTrail })
+    expect(strokedPaths('#3ddc84').length).toBeGreaterThan(0)
+  })
+
+  it('names the gain it is drawing in the legend', async () => {
+    await render({ monitor: true, gainDb: 6, reduction: -6.25 })
     const labels = callsOf('fillText').map((c) => c[1])
-    expect(labels).toContain('after gain')
+    expect(labels).toContain('after gain (+6.0 dB)')
     expect(labels).toContain('output')
     expect(labels).toContain('-6.3 dB limiting')
   })
 
   it('reads as no limiting when the reduction is only dither', async () => {
-    await render({ ...trails(), reduction: -0.0001 })
+    await render({ monitor: true, reduction: -0.0001 })
     expect(callsOf('fillText').map((c) => c[1])).toContain('0.0 dB limiting')
   })
 })

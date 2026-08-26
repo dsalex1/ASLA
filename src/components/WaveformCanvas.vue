@@ -17,12 +17,18 @@ const props = withDefaults(
     overview?: boolean
     /** the zoomed view: the wave is dragged under a fixed centre playhead */
     draggable?: boolean
-    /** measured output levels per peak bucket, filled in as the track plays */
-    gainTrail?: Float32Array | null
+    /** monitoring: the gain wave is a pure stretch of the source and needs no playing,
+     * the other two are measured and fill in as the track plays */
+    monitor?: boolean
+    gainDb?: number
     outTrail?: Float32Array | null
+    reductionTrail?: Float32Array | null
     reduction?: number
+    /** headroom above 0 dBFS to keep on screen, so what clips is visible rather than
+     * flattened against the edge */
+    headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, gainTrail: null, outTrail: null, reduction: 0 }
+  { loopA: null, loopB: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
 )
 
 const emit = defineEmits<{
@@ -44,9 +50,14 @@ const COLORS = {
   handle: '#b3a086',
   grid: 'rgba(255, 255, 255, 0.13)',
   gridLabel: 'rgba(255, 255, 255, 0.4)',
-  gainTrail: '#ff6b3d',
+  gainWave: '#ff6b3d',
   outTrail: '#3ddc84',
+  ceiling: '#5ad07a',
+  reductionCurve: '#f2f2f2',
 }
+
+const CEILING_DB = -1 // where the limiter is set to hold the output
+const REDUCTION_RANGE = 24 // dB of gain reduction that fills the top half of the view
 
 // the wave is drawn on a linear amplitude scale, so a dB line sits at its amplitude ratio
 const DB_LINES = [-3, -6, -12, -18, -24]
@@ -71,6 +82,11 @@ const secondsPerPixel = computed(() => span.value / Math.max(width.value, 1))
 const gridIndex = computed(() => Math.floor(props.start / secondsPerPixel.value + 1e-9))
 const subPixel = computed(() => props.start / secondsPerPixel.value - gridIndex.value)
 const columnTime = (column: number) => (gridIndex.value + column) * secondsPerPixel.value
+
+// Half the canvas normally means full scale. With headroom it means rather less, which
+// is what leaves room above the 0 dB line for anything driven past it to be seen.
+const fullScale = computed(() => height.value / 2 / amplitudeOf(props.headroomDb))
+const yOf = (level: number) => Math.max(0, Math.min(height.value, height.value / 2 - level * fullScale.value))
 
 const xOf = (seconds: number) => (seconds - props.start) / secondsPerPixel.value
 const timeOf = (x: number) => props.start + x * secondsPerPixel.value
@@ -97,7 +113,7 @@ function drawDbGrid(ctx: CanvasRenderingContext2D) {
   ctx.textAlign = 'left'
   ctx.textBaseline = 'bottom'
   for (const db of [0, ...DB_LINES]) {
-    const offset = amplitudeOf(db) * mid
+    const offset = amplitudeOf(db) * fullScale.value
     const top = Math.round(mid - offset) + 0.5
     const bottom = Math.round(mid + offset) - 0.5
     ctx.strokeStyle = COLORS.grid
@@ -161,22 +177,21 @@ function drawHandle(ctx: CanvasRenderingContext2D, x: number, label: 'A' | 'B') 
  * by a fraction of a pixel and still read as the same shape sliding, whereas independent
  * bars each redistribute their own anti-aliasing and shimmer.
  */
-function drawWave(ctx: CanvasRenderingContext2D, color: string) {
-  const mid = height.value / 2
-  const columns: { x: number; amplitude: number }[] = []
+function drawWave(ctx: CanvasRenderingContext2D, color: string, boost = 1) {
+  const columns: { x: number; level: number }[] = []
   // a column either side of the canvas so the shape does not pop in at the edges
   for (let column = -1; column <= width.value + 1; column++) {
     const at = columnTime(column)
     if (at < 0 || at >= props.duration) continue // the view can extend past either end
-    columns.push({ x: column - subPixel.value, amplitude: peakBetween(at, columnTime(column + 1)) * mid })
+    columns.push({ x: column - subPixel.value, level: peakBetween(at, columnTime(column + 1)) * boost })
   }
   if (!columns.length) return
 
   ctx.fillStyle = color
   ctx.beginPath()
-  ctx.moveTo(columns[0].x, mid - columns[0].amplitude)
-  for (const c of columns) ctx.lineTo(c.x, mid - c.amplitude)
-  for (let i = columns.length - 1; i >= 0; i--) ctx.lineTo(columns[i].x, mid + columns[i].amplitude)
+  ctx.moveTo(columns[0].x, yOf(columns[0].level))
+  for (const c of columns) ctx.lineTo(c.x, yOf(c.level))
+  for (let i = columns.length - 1; i >= 0; i--) ctx.lineTo(columns[i].x, yOf(-columns[i].level))
   ctx.closePath()
   ctx.fill()
 }
@@ -187,6 +202,40 @@ function drawWave(ctx: CanvasRenderingContext2D, color: string) {
  * played yet are zero and are left out, which is what makes the trail draw itself in as
  * the track plays.
  */
+/** the level the limiter is holding the output to */
+function drawCeiling(ctx: CanvasRenderingContext2D) {
+  ctx.strokeStyle = COLORS.ceiling
+  ctx.lineWidth = 1
+  const offset = amplitudeOf(CEILING_DB) * fullScale.value
+  // the half pixel goes towards the middle on both sides, so the pair stays symmetric
+  for (const y of [Math.round(height.value / 2 - offset) + 0.5, Math.round(height.value / 2 + offset) - 0.5]) {
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(width.value, y)
+    ctx.stroke()
+  }
+}
+
+/**
+ * Gain reduction hanging from the top edge, the way a limiter plugin draws it: the
+ * deeper the curve dips, the harder the limiter is working at that point.
+ */
+function drawReduction(ctx: CanvasRenderingContext2D, data: Float32Array) {
+  const points: { x: number; y: number }[] = []
+  for (let column = -1; column <= width.value + 1; column++) {
+    const at = columnTime(column)
+    if (at < 0 || at >= props.duration) continue
+    const db = peakBetween(at, columnTime(column + 1), data, 1)
+    points.push({ x: column - subPixel.value, y: (Math.min(db, REDUCTION_RANGE) / REDUCTION_RANGE) * (height.value / 2) })
+  }
+  if (points.length < 2) return
+  ctx.strokeStyle = COLORS.reductionCurve
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  points.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)))
+  ctx.stroke()
+}
+
 function drawTrail(ctx: CanvasRenderingContext2D, data: Float32Array, color: string) {
   const mid = height.value / 2
   const runs: { x: number; amplitude: number }[][] = []
@@ -199,8 +248,7 @@ function drawTrail(ctx: CanvasRenderingContext2D, data: Float32Array, color: str
       run = []
       continue
     }
-    // over 0 dBFS would leave the canvas, and being pinned to the edge is the useful signal
-    run.push({ x: column - subPixel.value, amplitude: Math.min(level, 1) * mid })
+    run.push({ x: column - subPixel.value, amplitude: mid - yOf(level) })
   }
   if (run.length) runs.push(run)
 
@@ -222,9 +270,9 @@ function drawMonitorLegend(ctx: CanvasRenderingContext2D) {
   ctx.textAlign = 'right'
   ctx.textBaseline = 'top'
   const entries: [string, string][] = [
-    ['after gain', COLORS.gainTrail],
+    [`after gain (${props.gainDb > 0 ? '+' : ''}${props.gainDb.toFixed(1)} dB)`, COLORS.gainWave],
     ['output', COLORS.outTrail],
-    [`${props.reduction <= -0.05 ? props.reduction.toFixed(1) : '0.0'} dB limiting`, COLORS.gridLabel],
+    [`${props.reduction <= -0.05 ? props.reduction.toFixed(1) : '0.0'} dB limiting`, COLORS.reductionCurve],
   ]
   entries.forEach(([label, color], i) => {
     ctx.fillStyle = color
@@ -259,7 +307,12 @@ function draw() {
   ctx.lineTo(width.value, mid)
   ctx.stroke()
 
+  // the boosted shape goes down first so the source reads as a core inside it; cutting
+  // the gain instead makes it the smaller shape, so then it goes on top
+  const boost = amplitudeOf(props.gainDb)
+  if (props.monitor && boost > 1) drawWave(ctx, COLORS.gainWave, boost)
   drawWave(ctx, props.overview ? COLORS.waveOverview : COLORS.wave)
+  if (props.monitor && boost < 1) drawWave(ctx, COLORS.gainWave, boost)
   if (!props.overview) drawDbGrid(ctx)
 
   // A-B repeat region, drawn over the wave so the looped part reads as one block
@@ -276,9 +329,10 @@ function draw() {
     ctx.restore()
   }
 
-  if (props.gainTrail && props.outTrail) {
-    drawTrail(ctx, props.gainTrail, COLORS.gainTrail)
-    drawTrail(ctx, props.outTrail, COLORS.outTrail)
+  if (props.monitor) {
+    drawCeiling(ctx)
+    if (props.outTrail) drawTrail(ctx, props.outTrail, COLORS.outTrail)
+    if (props.reductionTrail) drawReduction(ctx, props.reductionTrail)
     drawMonitorLegend(ctx)
   }
 
@@ -321,7 +375,7 @@ function scheduleDraw() {
 onMounted(draw)
 
 watch(
-  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.position, props.gainTrail, props.outTrail, width.value, height.value],
+  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.position, props.monitor, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
   scheduleDraw,
   { immediate: true, deep: true }
 )

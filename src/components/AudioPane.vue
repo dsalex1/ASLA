@@ -220,18 +220,22 @@ const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100
 // --- level monitoring: what the gain and the limiter are actually doing, measured off
 // the live signal and painted onto the waveform as the track plays ---
 const monitor = useLocalStorage('audio.monitor', false)
-const gainTrail = ref<Float32Array | null>(null)
 const outTrail = ref<Float32Array | null>(null)
+const reductionTrail = ref<Float32Array | null>(null)
 const reduction = ref(0)
+
+// the wave after the gain is a plain vertical stretch of the source, so it is drawn
+// straight from the peaks; only what the limiter does has to be measured
+const MONITOR_HEADROOM = 6 // dB kept above 0 dBFS while monitoring
 
 function resetTrails() {
   const buckets = Math.ceil(trackDuration.value * PEAKS_PER_SECOND) + 1
-  gainTrail.value = new Float32Array(buckets)
   outTrail.value = new Float32Array(buckets)
+  reductionTrail.value = new Float32Array(buckets)
   reduction.value = 0
 }
 
-// a trail measured at one gain says nothing about another, so changing it starts over
+// what the limiter did at one gain says nothing about another, so changing it starts over
 watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails())
 
 /**
@@ -255,15 +259,20 @@ function record(trail: Float32Array, samples: Float32Array, endsAt: number, trac
 // currentTime advances once per animation frame while playing, which is exactly when
 // there is a fresh window of samples to measure
 watch(currentTime, (at) => {
-  if (!monitor.value || !playing.value || !gainTrail.value || !outTrail.value) return
-  const { pre, post, sampleRate, latency, reduction: gr } = engine.levels()
+  if (!monitor.value || !playing.value || !outTrail.value || !reductionTrail.value) return
+  const { post, sampleRate, latency, reduction: gr } = engine.levels()
   reduction.value = gr
   // the window is already behind the playhead, and tempo decides how much track time a
   // second of it covers
   const endsAt = at - latency * tempo.value
   const trackSecondsPerSample = tempo.value / sampleRate
-  record(gainTrail.value, pre, endsAt, trackSecondsPerSample)
   record(outTrail.value, post, endsAt, trackSecondsPerSample)
+
+  // one reduction figure covers the whole window, so it is written across every bucket
+  // the window spans rather than pinned to its end
+  const first = Math.max(0, Math.round((endsAt - post.length * trackSecondsPerSample) * PEAKS_PER_SECOND))
+  const last = Math.min(Math.round(endsAt * PEAKS_PER_SECOND), reductionTrail.value.length - 1)
+  for (let i = first; i <= last; i++) reductionTrail.value[i] = Math.max(reductionTrail.value[i], -gr)
 })
 
 const hasAudio = computed(() => !!track.value)
@@ -299,9 +308,12 @@ defineExpose({ position: currentTime })
         :loopA="loopA"
         :loopB="loopB"
         :position="currentTime"
-        :gainTrail="monitor ? gainTrail : null"
-        :outTrail="monitor ? outTrail : null"
+        :monitor="monitor"
+        :gainDb="gainDb"
+        :outTrail="outTrail"
+        :reductionTrail="reductionTrail"
         :reduction="reduction"
+        :headroomDb="monitor ? MONITOR_HEADROOM : 0"
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
