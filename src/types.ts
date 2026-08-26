@@ -18,6 +18,9 @@ export type CustomSetlistEntry = {
 
 export type ViewMode = 'lyrics' | 'chords' | 'drums' | 'audio'
 
+/** what the big pane is showing; the ViewMode above only picks which one it opens on */
+export type PaneView = 'waveform' | 'sheet' | 'drums' | 'lyrics' | 'chords'
+
 export type Folder = {
   id?: string
   name: string
