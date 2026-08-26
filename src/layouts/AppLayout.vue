@@ -5,7 +5,7 @@ import { RouterLink } from 'vue-router'
 
 const auth = useAuth()
 
-const version = `V0.0.20-beta${__BETA_BUILD__}`
+const version = `V0.0.21-beta${__BETA_BUILD__}`
 </script>
 <template>
   <v-app>
