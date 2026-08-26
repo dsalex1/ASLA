@@ -307,3 +307,81 @@ describe('WaveformCanvas interaction', () => {
     expect(wrapper.emitted('seek')![0]).toEqual([5.05])
   })
 })
+
+describe('WaveformCanvas level monitoring', () => {
+  // half the track measured at -6 dB after the gain, held to -12 dB by the limiter
+  const trails = () => {
+    const gainTrail = new Float32Array(DURATION * 100)
+    const outTrail = new Float32Array(DURATION * 100)
+    gainTrail.fill(0.5, 0, DURATION * 50)
+    outTrail.fill(0.25, 0, DURATION * 50)
+    return { gainTrail, outTrail }
+  }
+
+  /** the points of each path that was stroked in the given colour */
+  const strokedPaths = (color: string) => {
+    const paths: { x: number; y: number }[][] = []
+    let current: { x: number; y: number }[] = []
+    for (const [name, ...args] of ctx.calls) {
+      if (name === 'beginPath') current = []
+      else if (name === 'moveTo' || name === 'lineTo') current.push({ x: args[0] as number, y: args[1] as number })
+      else if (name === 'stroke' && args[0] === color) paths.push(current)
+    }
+    return paths
+  }
+
+  it('draws nothing extra until both trails are supplied', async () => {
+    await render({})
+    expect(callsOf('stroke').map((c) => c[1])).not.toContain('#ff6b3d')
+  })
+
+  it('strokes each trail in its own colour', async () => {
+    await render({ ...trails() })
+    const strokes = callsOf('stroke').map((c) => c[1])
+    expect(strokes).toContain('#ff6b3d') // after the gain
+    expect(strokes).toContain('#3ddc84') // what actually leaves
+  })
+
+  it('mirrors a trail around the centre at its measured amplitude', async () => {
+    await render({ ...trails() })
+    const [top, bottom] = strokedPaths('#ff6b3d')
+    // 0.5 of full scale, so a quarter of the height either side of the middle
+    expect(top.every((p) => Math.abs(p.y - HEIGHT / 4) < 1)).toBe(true)
+    expect(bottom.every((p) => Math.abs(p.y - (HEIGHT * 3) / 4) < 1)).toBe(true)
+  })
+
+  it('holds the limited trail below the one feeding it', async () => {
+    await render({ ...trails() })
+    const [gainTop] = strokedPaths('#ff6b3d')
+    const [outTop] = strokedPaths('#3ddc84')
+    expect(Math.min(...outTop.map((p) => p.y))).toBeGreaterThan(Math.max(...gainTop.map((p) => p.y)))
+  })
+
+  it('leaves unplayed stretches blank instead of drawing them at zero', async () => {
+    await render({ ...trails() })
+    const xs = strokedPaths('#ff6b3d').flat().map((p) => p.x)
+    expect(Math.max(...xs)).toBeLessThan(WIDTH / 2 + 2) // the unplayed half is untouched
+  })
+
+  it('pins a trail that goes over full scale to the edge rather than off-canvas', async () => {
+    const gainTrail = new Float32Array(DURATION * 100).fill(2.5)
+    const outTrail = new Float32Array(DURATION * 100).fill(0.9)
+    await render({ gainTrail, outTrail })
+    const [top, bottom] = strokedPaths('#ff6b3d')
+    expect(top.every((p) => p.y === 0)).toBe(true)
+    expect(bottom.every((p) => p.y === HEIGHT)).toBe(true)
+  })
+
+  it('reports the live gain reduction alongside the legend', async () => {
+    await render({ ...trails(), reduction: -6.25 })
+    const labels = callsOf('fillText').map((c) => c[1])
+    expect(labels).toContain('after gain')
+    expect(labels).toContain('output')
+    expect(labels).toContain('-6.3 dB limiting')
+  })
+
+  it('reads as no limiting when the reduction is only dither', async () => {
+    await render({ ...trails(), reduction: -0.0001 })
+    expect(callsOf('fillText').map((c) => c[1])).toContain('0.0 dB limiting')
+  })
+})
