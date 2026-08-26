@@ -370,8 +370,11 @@ describe('WaveformCanvas level monitoring', () => {
     expect(Math.round(zero![3] as number)).toBe(HEIGHT / 4 + 11)
   })
 
-  it('rules the ceiling the limiter holds to', async () => {
+  it('rules the ceiling the limiter holds to, and nothing when it is passing through', async () => {
     await render({ monitor: true, headroomDb: 6 })
+    expect(strokedPaths('#5ad07a')).toHaveLength(0) // no ceiling given, so nothing is being held
+
+    await render({ monitor: true, headroomDb: 6, ceilingDb: -1 })
     const ys = strokedPaths('#5ad07a').map((p) => p[0].y).sort((a, b) => a - b)
     // -1 dBFS, one rule either side of the middle
     expect(ys[0]).toBeGreaterThan(0)

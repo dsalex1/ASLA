@@ -12,6 +12,8 @@ const props = withDefaults(
     markers: number[]
     loopA?: number | null
     loopB?: number | null
+    /** the loop repeats; when it does not, the region is still shown but greyed out */
+    loopActive?: boolean
     position: number
     /** the compact whole-track strip: no flags to grab, tap anywhere to seek */
     overview?: boolean
@@ -24,11 +26,13 @@ const props = withDefaults(
     outTrail?: Float32Array | null
     reductionTrail?: Float32Array | null
     reduction?: number
+    /** where the limiter is holding the output, or null when it is passing through */
+    ceilingDb?: number | null
     /** headroom above 0 dBFS to keep on screen, so what clips is visible rather than
      * flattened against the edge */
     headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
+  { loopA: null, loopB: null, loopActive: true, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
 )
 
 const emit = defineEmits<{
@@ -44,6 +48,8 @@ const COLORS = {
   waveOverview: '#e8bd6d',
   loop: '#f59e0b',
   loopFill: 'rgba(245, 158, 11, 0.35)',
+  loopOff: '#8b8b8b',
+  loopOffFill: 'rgba(160, 160, 160, 0.22)',
   zeroLine: '#333',
   marker: '#4a90d9',
   playhead: '#e53935',
@@ -59,12 +65,13 @@ const COLORS = {
 // enough of a ladder that some step always lands 6-12 rules across the view
 const TIME_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 
-const CEILING_DB = -1 // where the limiter is set to hold the output
 const REDUCTION_RANGE = 24 // dB of gain reduction that fills the top half of the view
 
 // the wave is drawn on a linear amplitude scale, so a dB line sits at its amplitude ratio
 const DB_LINES = [-3, -6, -12, -18, -24]
 const amplitudeOf = (db: number) => 10 ** (db / 20)
+
+const loopColor = computed(() => (props.loopActive ? COLORS.loop : COLORS.loopOff))
 
 const FLAG_W = 26
 const FLAG_H = 26
@@ -160,8 +167,8 @@ function drawTimeGrid(ctx: CanvasRenderingContext2D) {
   }
 }
 
-function drawFlag(ctx: CanvasRenderingContext2D, x: number, label: string, active: boolean) {
-  const color = active ? COLORS.loop : COLORS.marker
+function drawFlag(ctx: CanvasRenderingContext2D, x: number, label: string, inLoop: boolean) {
+  const color = inLoop ? loopColor.value : COLORS.marker
   ctx.strokeStyle = color
   ctx.lineWidth = 1
   ctx.beginPath()
@@ -190,7 +197,7 @@ function drawHandle(ctx: CanvasRenderingContext2D, x: number, label: 'A' | 'B') 
   const top = height.value * 0.55 - HANDLE_H / 2
   const left = label === 'A' ? x - HANDLE_W : x
   ctx.fillStyle = COLORS.handle
-  ctx.strokeStyle = COLORS.loop
+  ctx.strokeStyle = loopColor.value
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.roundRect(left, top, HANDLE_W, HANDLE_H, 4)
@@ -237,7 +244,7 @@ function drawWave(ctx: CanvasRenderingContext2D, color: string, boost = 1) {
 function drawCeiling(ctx: CanvasRenderingContext2D) {
   ctx.strokeStyle = COLORS.ceiling
   ctx.lineWidth = 1
-  const offset = amplitudeOf(CEILING_DB) * fullScale.value
+  const offset = amplitudeOf(props.ceilingDb ?? 0) * fullScale.value
   // the half pixel goes towards the middle on both sides, so the pair stays symmetric
   for (const y of [Math.round(height.value / 2 - offset) + 0.5, Math.round(height.value / 2 + offset) - 0.5]) {
     ctx.beginPath()
@@ -353,18 +360,18 @@ function draw() {
   const { loopA, loopB } = props
   if (loopA != null && loopB != null) {
     const [left, right] = [xOf(loopA), xOf(loopB)]
-    ctx.fillStyle = COLORS.loopFill
+    ctx.fillStyle = props.loopActive ? COLORS.loopFill : COLORS.loopOffFill
     ctx.fillRect(left, 0, right - left, height.value)
     ctx.save()
     ctx.beginPath()
     ctx.rect(left, 0, right - left, height.value)
     ctx.clip()
-    drawWave(ctx, COLORS.loop)
+    drawWave(ctx, loopColor.value)
     ctx.restore()
   }
 
   if (props.monitor) {
-    drawCeiling(ctx)
+    if (props.ceilingDb != null) drawCeiling(ctx)
     if (props.outTrail) drawTrail(ctx, props.outTrail, COLORS.outTrail)
     if (props.reductionTrail) drawReduction(ctx, props.reductionTrail)
     drawMonitorLegend(ctx)
@@ -409,7 +416,7 @@ function scheduleDraw() {
 onMounted(draw)
 
 watch(
-  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.position, props.monitor, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
+  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.loopActive, props.position, props.monitor, props.ceilingDb, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
   scheduleDraw,
   { immediate: true, deep: true }
 )

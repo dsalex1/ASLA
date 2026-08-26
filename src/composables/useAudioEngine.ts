@@ -1,5 +1,5 @@
 import { PitchShifter } from 'soundtouchjs'
-import { onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
 const BUFFER_SIZE = 4096
 
@@ -19,6 +19,8 @@ export function useAudioEngine() {
   const loopA = ref<number | null>(null)
   const loopB = ref<number | null>(null)
   const gainDb = ref(0)
+  /** A-B only repeats while the loop controls are on screen */
+  const loopEnabled = ref(true)
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
@@ -37,6 +39,21 @@ export function useAudioEngine() {
   const TAP_WINDOW = 2048
 
   /**
+   * Where the limiter holds the output, or null when it is out of the way. Only a boost
+   * can clip, so cutting the trim passes straight through; the ceiling then eases in
+   * over the first dB of boost rather than dropping to -1 dB the moment the gain moves.
+   */
+  const ceilingOf = (db: number) => (db > 0 ? -Math.min(db, 1) : null)
+  const limiterCeilingDb = computed(() => ceilingOf(gainDb.value))
+
+  function applyLimiter() {
+    if (!limiter) return
+    const ceiling = limiterCeilingDb.value
+    limiter.threshold.value = ceiling ?? 0
+    limiter.ratio.value = ceiling == null ? 1 : 20 // ratio 1 is a pass-through
+  }
+
+  /**
    * shifter -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
    * clip on its own, so a brick-wall limiter sits after it: it is inaudible while the
    * signal stays under the threshold and only bites once the boost would have clipped.
@@ -45,9 +62,8 @@ export function useAudioEngine() {
     if (!gain) {
       const ctx = audioContext()
       limiter = ctx.createDynamicsCompressor()
-      limiter.threshold.value = -1
       limiter.knee.value = 0
-      limiter.ratio.value = 20
+      applyLimiter()
       limiter.attack.value = 0.003
       limiter.release.value = 0.1
       limiter.connect(ctx.destination)
@@ -121,7 +137,7 @@ export function useAudioEngine() {
     if (!playing.value) return
     const at = positionNow()
     // A-B repeat: jump back as soon as the playhead runs past B
-    if (loopA.value != null && loopB.value != null && at >= loopB.value) seek(loopA.value)
+    if (looping() && at >= loopB.value!) seek(loopA.value!)
     else if (at >= duration.value) (currentTime.value = duration.value), pause()
     else currentTime.value = at
     frame = requestAnimationFrame(tick)
@@ -131,8 +147,7 @@ export function useAudioEngine() {
     const s = ensureShifter()
     if (!s) return
     await audioContext().resume()
-    if (loopA.value != null && loopB.value != null && (currentTime.value < loopA.value || currentTime.value >= loopB.value))
-      seek(loopA.value)
+    if (looping() && (currentTime.value < loopA.value! || currentTime.value >= loopB.value!)) seek(loopA.value!)
     rebase()
     s.connect(output())
     playing.value = true
@@ -150,6 +165,8 @@ export function useAudioEngine() {
   }
 
   const toggle = () => (playing.value ? pause() : play())
+
+  const looping = () => loopEnabled.value && loopA.value != null && loopB.value != null
 
   const preSamples = new Float32Array(TAP_WINDOW)
   const postSamples = new Float32Array(TAP_WINDOW)
@@ -195,7 +212,10 @@ export function useAudioEngine() {
   })
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
   // ramped rather than set, so dragging the trim does not click
-  watch(gainDb, (v) => gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01))
+  watch(gainDb, (v) => {
+    gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01)
+    applyLimiter()
+  })
 
   onUnmounted(() => {
     teardownShifter()
@@ -209,6 +229,6 @@ export function useAudioEngine() {
 
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
-    loopA, loopB, load, play, pause, toggle, seek, skip, levels,
+    loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
   }
 }
