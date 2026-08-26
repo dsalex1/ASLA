@@ -14,7 +14,7 @@ const engine = {
   error: ref(''),
   tempo: ref(1),
   pitch: ref(0),
-  volume: ref(1),
+  gainDb: ref(0),
   outputDevice: ref(''),
   canPickOutput: false,
   loopA: ref<number | null>(null),
@@ -409,5 +409,35 @@ describe('AudioPane A-B move', () => {
     const wrapper = await mountPane([track()])
     for (const label of ['Nudge left', 'Nudge right', 'Halve selection', 'Double selection'])
       expect(button(wrapper, label).attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('AudioPane level trim', () => {
+  it('loads the trim from the track and steps it by 0.1 dB', async () => {
+    const wrapper = await mountPane([track({ gainDb: -3 })])
+    expect(engine.gainDb.value).toBe(-3)
+
+    await button(wrapper, 'Louder').trigger('click')
+    expect(engine.gainDb.value).toBe(-2.9)
+    await button(wrapper, 'Quieter').trigger('click')
+    await button(wrapper, 'Quieter').trigger('click')
+    expect(engine.gainDb.value).toBe(-3.1)
+  })
+
+  it('clamps the trim to 20 dB either way', async () => {
+    const wrapper = await mountPane([track({ gainDb: 19.95 })])
+    for (let i = 0; i < 5; i++) await button(wrapper, 'Louder').trigger('click')
+    expect(engine.gainDb.value).toBe(20)
+  })
+
+  it('stores the trim on the track, not globally', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountPane([track()])
+    await button(wrapper, 'Louder').trigger('click')
+    await vi.advanceTimersByTimeAsync(600)
+    vi.useRealTimers()
+
+    const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
+    expect(written.audioTracks[0].gainDb).toBe(0.1)
   })
 })

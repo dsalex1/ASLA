@@ -29,7 +29,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, volume, outputDevice, loopA, loopB } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, outputDevice, loopA, loopB } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
@@ -64,6 +64,7 @@ watch(
     loopB.value = current.loopB ?? null
     tempo.value = current.tempo ?? 1
     pitch.value = current.pitch ?? 0
+    gainDb.value = current.gainDb ?? 0
     span.value = Math.min(DEFAULT_SPAN, current.duration)
     peaks.value = new Uint8Array()
     peaks.value = await loadPeaks(current)
@@ -78,7 +79,7 @@ const persist = useDebounceFn(() => {
   const updated = tracks.value.map((t, i) => {
     if (i !== trackIndex.value) return t
     // Firestore rejects undefined, so a cleared A-B has to be left out entirely
-    const next: AudioTrack = { ...t, markers: markers.value, tempo: tempo.value, pitch: pitch.value }
+    const next: AudioTrack = { ...t, markers: markers.value, tempo: tempo.value, pitch: pitch.value, gainDb: gainDb.value }
     delete next.loopA
     delete next.loopB
     if (loopA.value != null) next.loopA = loopA.value
@@ -88,7 +89,7 @@ const persist = useDebounceFn(() => {
   updateDoc(doc(songCollection, props.song.id), { audioTracks: updated, selectedAudioTrack: trackIndex.value })
 }, 500)
 
-watch([markers, loopA, loopB, tempo, pitch, trackIndex], persist, { deep: true })
+watch([markers, loopA, loopB, tempo, pitch, gainDb, trackIndex], persist, { deep: true })
 
 // --- markers ---
 const nearestMarker = (seconds: number) =>
@@ -202,18 +203,20 @@ const tempoJogRange = computed(() =>
 )
 const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
 
-// --- volume and output device: a property of this device, not of the song ---
-const MAX_VOLUME = 2
+// --- level trim: no web API reaches the system volume, so this is the app's own gain
+// stage. It belongs to the track, which is the point: it evens out backing tracks that
+// were mastered at different levels. The output device, by contrast, is this device's. ---
+const GAIN_LIMIT = 20 // dB either way
 
-// no web API can reach the system volume, so this is the app's own gain stage
-const storedVolume = useLocalStorage('audio.volume', 1)
 const storedOutput = useLocalStorage('audio.output', '')
-volume.value = storedVolume.value
 outputDevice.value = storedOutput.value
-watch(volume, (v) => (storedVolume.value = v))
 watch(outputDevice, (v) => (storedOutput.value = v))
 
-const adjustVolume = (delta: number) => (volume.value = Math.round(Math.max(0, Math.min(MAX_VOLUME, volume.value + delta)) * 100) / 100)
+const adjustGain = (delta: number) =>
+  (gainDb.value = Math.round(Math.max(-GAIN_LIMIT, Math.min(GAIN_LIMIT, gainDb.value + delta)) * 100) / 100)
+
+const gainLabel = computed(() => `${gainDb.value > 0 ? '+' : ''}${gainDb.value.toFixed(2)} dB`)
+const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100)}%`)
 
 const outputs = ref<MediaDeviceInfo[]>([])
 
@@ -323,17 +326,17 @@ defineExpose({ position: currentTime })
       </div>
 
       <div class="group">
-        <button class="tbtn" aria-label="Quieter" @click="adjustVolume(-0.05)"><i class="fas fa-volume-low" /></button>
+        <button class="tbtn" aria-label="Quieter" @click="adjustGain(-0.1)"><i class="fas fa-volume-low" /></button>
         <JogStrip
-          v-model="volume"
+          v-model="gainDb"
           :step="0.01"
-          :min="0"
-          :max="MAX_VOLUME"
-          :resetTo="1"
-          :label="`${Math.round(volume * 100)}%`"
-          sub="vol"
+          :min="-GAIN_LIMIT"
+          :max="GAIN_LIMIT"
+          :resetTo="0"
+          :label="gainLabel"
+          :sub="gainPercent"
         />
-        <button class="tbtn" aria-label="Louder" @click="adjustVolume(0.05)"><i class="fas fa-volume-high" /></button>
+        <button class="tbtn" aria-label="Louder" @click="adjustGain(0.1)"><i class="fas fa-volume-high" /></button>
         <select v-if="engine.canPickOutput" v-model="outputDevice" class="track-picker" aria-label="Audio output" @focus="loadOutputs">
           <option value="">System default</option>
           <option v-for="d in outputs" :key="d.deviceId" :value="d.deviceId">{{ d.label || 'Unnamed output' }}</option>

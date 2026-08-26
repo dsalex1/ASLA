@@ -18,23 +18,38 @@ export function useAudioEngine() {
   const pitch = ref(0)
   const loopA = ref<number | null>(null)
   const loopB = ref<number | null>(null)
-  const volume = ref(1)
+  const gainDb = ref(0)
   const outputDevice = ref('')
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
   let shifter: PitchShifter | null = null
   let gain: GainNode | null = null
+  let limiter: DynamicsCompressorNode | null = null
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
 
-  // everything is routed through one gain node, so volume survives track changes
+  const amplitude = (db: number) => 10 ** (db / 20)
+
+  /**
+   * shifter -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
+   * clip on its own, so a brick-wall limiter sits after it: it is inaudible while the
+   * signal stays under the threshold and only bites once the boost would have clipped.
+   */
   function output() {
     if (!gain) {
-      gain = audioContext().createGain()
-      gain.gain.value = volume.value
-      gain.connect(audioContext().destination)
+      const ctx = audioContext()
+      limiter = ctx.createDynamicsCompressor()
+      limiter.threshold.value = -1
+      limiter.knee.value = 0
+      limiter.ratio.value = 20
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.25
+      limiter.connect(ctx.destination)
+      gain = ctx.createGain()
+      gain.gain.value = amplitude(gainDb.value)
+      gain.connect(limiter)
     }
     return gain
   }
@@ -159,19 +174,21 @@ export function useAudioEngine() {
     if (shifter) shifter.tempo = v
   })
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
-  watch(volume, (v) => gain && (gain.gain.value = v))
+  // ramped rather than set, so dragging the trim does not click
+  watch(gainDb, (v) => gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01))
   watch(outputDevice, applySink)
 
   onUnmounted(() => {
     teardownShifter()
     buffer = null
     gain = null
+    limiter = null
     context?.close()
     context = null
   })
 
   return {
-    currentTime, duration, playing, loading, error, tempo, pitch, volume, outputDevice, canPickOutput,
+    currentTime, duration, playing, loading, error, tempo, pitch, gainDb, outputDevice, canPickOutput,
     loopA, loopB, load, play, pause, toggle, seek, skip,
   }
 }
