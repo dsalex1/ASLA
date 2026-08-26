@@ -131,6 +131,8 @@ describe('WaveformCanvas drawing', () => {
     expect(line[playhead - 1]).toEqual(['moveTo', 250, 0])
   })
 
+  const markerLabels = () => callsOf('fillText').map((c) => c[1]).filter((l: string) => !l.startsWith('-') && l !== '0')
+
   it('fills the A-B region and redraws the wave clipped to it in orange', async () => {
     await render({ loopA: 2, loopB: 4 })
     const region = callsOf('fillRect').find((c) => c[5] === 'rgba(245, 158, 11, 0.35)')
@@ -142,8 +144,17 @@ describe('WaveformCanvas drawing', () => {
 
   it('numbers markers in order and skips ones scrolled out of view', async () => {
     await render({ markers: [1, 5], start: 4, end: 10 })
+    expect(markerLabels()).toEqual(['2']) // marker 1 is left of the window
+  })
+
+  it('rules the view at fixed dB levels, placed by amplitude', async () => {
+    await render({})
     const labels = callsOf('fillText').map((c) => c[1])
-    expect(labels).toEqual(['2']) // marker 1 is left of the window
+    expect(labels).toEqual(['0', '-3', '-6', '-12', '-18', '-24'])
+
+    // -6 dB is half amplitude, so its line sits a quarter of the height from the middle
+    const y = callsOf('moveTo').find((c) => c[2] > HEIGHT / 4 - 1 && c[2] < HEIGHT / 4 + 1)
+    expect(y).toBeTruthy()
   })
 
   it('turns markers inside the A-B region orange', async () => {

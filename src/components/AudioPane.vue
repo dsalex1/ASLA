@@ -2,6 +2,7 @@
 import JogStrip from '@/components/JogStrip.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
+import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song } from '@/types'
@@ -246,6 +247,42 @@ onMounted(() => {
   navigator.mediaDevices?.addEventListener?.('devicechange', loadOutputs)
 })
 
+// --- level monitoring: what the gain and the limiter are actually doing, measured off
+// the live signal and painted onto the waveform as the track plays ---
+const monitor = useLocalStorage('audio.monitor', false)
+const gainTrail = ref<Float32Array | null>(null)
+const outTrail = ref<Float32Array | null>(null)
+const reduction = ref(0)
+
+function resetTrails() {
+  const buckets = Math.ceil(trackDuration.value * PEAKS_PER_SECOND) + 1
+  gainTrail.value = new Float32Array(buckets)
+  outTrail.value = new Float32Array(buckets)
+  reduction.value = 0
+  lastBucket = -1
+}
+
+// a trail measured at one gain says nothing about another, so changing it starts over
+watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails())
+
+let lastBucket = -1
+
+// currentTime advances once per animation frame while playing, which is exactly when
+// there is a fresh window of samples to measure
+watch(currentTime, (at) => {
+  if (!monitor.value || !playing.value || !gainTrail.value || !outTrail.value) return
+  const { pre, post, reduction: gr } = engine.levels()
+  reduction.value = gr
+  const bucket = Math.min(Math.round(at * PEAKS_PER_SECOND), gainTrail.value.length - 1)
+  // one frame can span several buckets, more so at high tempo, so fill the gap behind it
+  const from = lastBucket >= 0 && bucket - lastBucket <= PEAKS_PER_SECOND ? lastBucket + 1 : bucket
+  for (let i = Math.min(from, bucket); i <= bucket; i++) {
+    gainTrail.value[i] = Math.max(gainTrail.value[i], pre)
+    outTrail.value[i] = Math.max(outTrail.value[i], post)
+  }
+  lastBucket = bucket
+})
+
 const hasAudio = computed(() => !!track.value)
 const trackDuration = computed(() => duration.value || track.value?.duration || 0)
 const viewModes = computed(() =>
@@ -279,6 +316,9 @@ defineExpose({ position: currentTime })
         :loopA="loopA"
         :loopB="loopB"
         :position="currentTime"
+        :gainTrail="monitor ? gainTrail : null"
+        :outTrail="monitor ? outTrail : null"
+        :reduction="reduction"
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
@@ -405,6 +445,17 @@ defineExpose({ position: currentTime })
           <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
         </div>
       </template>
+
+      <button
+        v-if="hasAudio"
+        class="tbtn"
+        :class="{ 'tbtn--on': monitor }"
+        aria-label="Monitor levels"
+        title="Show measured levels on the waveform"
+        @click="monitor = !monitor"
+      >
+        <i class="fas fa-chart-simple" />
+      </button>
 
       <div class="group group--side segmented">
         <button

@@ -1,5 +1,6 @@
 import AudioPane from '@/components/AudioPane.vue'
 import JogStrip from '@/components/JogStrip.vue'
+import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { AudioTrack, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
@@ -24,6 +25,7 @@ const engine = {
   pause: vi.fn(),
   toggle: vi.fn(),
   seek: vi.fn((t: number) => (engine.currentTime.value = t)),
+  levels: vi.fn(() => ({ pre: 0.8, post: 0.5, reduction: -4 })),
   skip: vi.fn(),
 }
 vi.mock('@/composables/useAudioEngine', () => ({ useAudioEngine: () => engine }))
@@ -62,11 +64,13 @@ const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear() // the monitor toggle and the output choice live there
   Object.assign(engine, { currentTime: ref(0), duration: ref(100), playing: ref(false) })
   engine.tempo.value = 1
   engine.pitch.value = 0
   engine.loopA.value = null
   engine.loopB.value = null
+  engine.gainDb.value = 0
 })
 
 describe('AudioPane track loading', () => {
@@ -439,5 +443,56 @@ describe('AudioPane level trim', () => {
 
     const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
     expect(written.audioTracks[0].gainDb).toBe(0.1)
+  })
+})
+
+describe('AudioPane level monitoring', () => {
+  const canvas = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(WaveformCanvas)
+
+  it('passes no trails until monitoring is switched on', async () => {
+    const wrapper = await mountPane()
+    expect(canvas(wrapper).props('gainTrail')).toBe(null)
+
+    await button(wrapper, 'Monitor levels').trigger('click')
+    expect(canvas(wrapper).props('gainTrail')).toBeInstanceOf(Float32Array)
+  })
+
+  it('records the measured levels at the playhead while playing', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    const trail = canvas(wrapper).props('gainTrail') as Float32Array
+    expect(trail[200]).toBeCloseTo(0.8) // 2s at 100 buckets per second
+    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBeCloseTo(0.5)
+    expect(canvas(wrapper).props('reduction')).toBe(-4)
+  })
+
+  it('fills the buckets a single frame skipped over', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 1
+    await flushPromises()
+    engine.currentTime.value = 1.05 // five buckets on from the last frame
+    await flushPromises()
+
+    const trail = canvas(wrapper).props('gainTrail') as Float32Array
+    expect([...trail.slice(101, 106)].every((v) => v > 0)).toBe(true)
+  })
+
+  it('starts the trail over when the gain changes, since old levels no longer apply', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+    expect((canvas(wrapper).props('gainTrail') as Float32Array)[200]).toBeGreaterThan(0)
+
+    await button(wrapper, 'Louder').trigger('click')
+    await flushPromises()
+    expect((canvas(wrapper).props('gainTrail') as Float32Array)[200]).toBe(0)
   })
 })

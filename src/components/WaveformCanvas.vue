@@ -17,8 +17,12 @@ const props = withDefaults(
     overview?: boolean
     /** the zoomed view: the wave is dragged under a fixed centre playhead */
     draggable?: boolean
+    /** measured output levels per peak bucket, filled in as the track plays */
+    gainTrail?: Float32Array | null
+    outTrail?: Float32Array | null
+    reduction?: number
   }>(),
-  { loopA: null, loopB: null }
+  { loopA: null, loopB: null, gainTrail: null, outTrail: null, reduction: 0 }
 )
 
 const emit = defineEmits<{
@@ -40,6 +44,8 @@ const COLORS = {
   handle: '#b3a086',
   grid: 'rgba(255, 255, 255, 0.13)',
   gridLabel: 'rgba(255, 255, 255, 0.4)',
+  gainTrail: '#ff6b3d',
+  outTrail: '#3ddc84',
 }
 
 // the wave is drawn on a linear amplitude scale, so a dB line sits at its amplitude ratio
@@ -70,13 +76,13 @@ const xOf = (seconds: number) => (seconds - props.start) / secondsPerPixel.value
 const timeOf = (x: number) => props.start + x * secondsPerPixel.value
 const clampTime = (t: number) => Math.max(0, Math.min(t, props.duration))
 
-/** loudest peak between two times, 0..1 */
-function peakBetween(from: number, to: number) {
+/** loudest value between two times, 0..1, over any per-bucket series */
+function peakBetween(from: number, to: number, data: Uint8Array | Float32Array = props.peaks, scale = 1 / 255) {
   const first = Math.max(0, Math.floor(from * PEAKS_PER_SECOND))
-  const last = Math.min(props.peaks.length - 1, Math.max(first, Math.ceil(to * PEAKS_PER_SECOND) - 1))
+  const last = Math.min(data.length - 1, Math.max(first, Math.ceil(to * PEAKS_PER_SECOND) - 1))
   let peak = 0
-  for (let i = first; i <= last; i++) if (props.peaks[i] > peak) peak = props.peaks[i]
-  return peak / 255
+  for (let i = first; i <= last; i++) if (data[i] > peak) peak = data[i]
+  return peak * scale
 }
 
 /**
@@ -175,6 +181,57 @@ function drawWave(ctx: CanvasRenderingContext2D, color: string) {
   ctx.fill()
 }
 
+/**
+ * The measured level, mirrored around the centre like the wave but stroked rather than
+ * filled, so the source wave stays readable underneath it. Buckets that have not been
+ * played yet are zero and are left out, which is what makes the trail draw itself in as
+ * the track plays.
+ */
+function drawTrail(ctx: CanvasRenderingContext2D, data: Float32Array, color: string) {
+  const mid = height.value / 2
+  const runs: { x: number; amplitude: number }[][] = []
+  let run: { x: number; amplitude: number }[] = []
+  for (let column = -1; column <= width.value + 1; column++) {
+    const at = columnTime(column)
+    const level = at < 0 || at >= props.duration ? 0 : peakBetween(at, columnTime(column + 1), data, 1)
+    if (level <= 0) {
+      if (run.length) runs.push(run)
+      run = []
+      continue
+    }
+    // over 0 dBFS would leave the canvas, and being pinned to the edge is the useful signal
+    run.push({ x: column - subPixel.value, amplitude: Math.min(level, 1) * mid })
+  }
+  if (run.length) runs.push(run)
+
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.5
+  ctx.lineJoin = 'round'
+  for (const points of runs) {
+    for (const sign of [-1, 1]) {
+      ctx.beginPath()
+      points.forEach((p, i) => (i ? ctx.lineTo(p.x, mid + sign * p.amplitude) : ctx.moveTo(p.x, mid + sign * p.amplitude)))
+      ctx.stroke()
+    }
+  }
+}
+
+/** what the two trails mean, plus what the limiter is doing about it right now */
+function drawMonitorLegend(ctx: CanvasRenderingContext2D) {
+  ctx.font = '9px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'top'
+  const entries: [string, string][] = [
+    ['after gain', COLORS.gainTrail],
+    ['output', COLORS.outTrail],
+    [`${props.reduction <= -0.05 ? props.reduction.toFixed(1) : '0.0'} dB limiting`, COLORS.gridLabel],
+  ]
+  entries.forEach(([label, color], i) => {
+    ctx.fillStyle = color
+    ctx.fillText(label, width.value - 4, 4 + i * 11)
+  })
+}
+
 let backingWidth = 0
 let backingHeight = 0
 
@@ -219,6 +276,12 @@ function draw() {
     ctx.restore()
   }
 
+  if (props.gainTrail && props.outTrail) {
+    drawTrail(ctx, props.gainTrail, COLORS.gainTrail)
+    drawTrail(ctx, props.outTrail, COLORS.outTrail)
+    drawMonitorLegend(ctx)
+  }
+
   props.markers.forEach((seconds, i) => {
     const x = xOf(seconds)
     if (x < -FLAG_W || x > width.value) return
@@ -258,7 +321,7 @@ function scheduleDraw() {
 onMounted(draw)
 
 watch(
-  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.position, width.value, height.value],
+  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.position, props.gainTrail, props.outTrail, width.value, height.value],
   scheduleDraw,
   { immediate: true, deep: true }
 )
