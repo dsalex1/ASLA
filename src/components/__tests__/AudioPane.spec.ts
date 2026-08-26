@@ -374,27 +374,29 @@ describe('AudioPane persistence', () => {
 
 describe('AudioPane A-B move', () => {
   const loop = () => [engine.loopA.value, engine.loopB.value]
-  const round = () => loop().map((v) => (v == null ? v : Math.round(v * 100) / 100))
+  const expectLoop = (a: number, b: number) => {
+    expect(engine.loopA.value).toBeCloseTo(a, 5)
+    expect(engine.loopB.value).toBeCloseTo(b, 5)
+  }
 
   it('nudges both ends at once by default, keeping the length', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })]) // 10s long, so 2.5s a press
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([12.5, 22.5])
+    expectLoop(10.025, 20.025)
     await button(wrapper, 'Nudge left').trigger('click')
     await button(wrapper, 'Nudge left').trigger('click')
-    expect(round()).toEqual([7.5, 17.5])
+    expectLoop(9.975, 19.975)
   })
 
   it('moves only the selected end', async () => {
     const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
     await button(wrapper, 'Move A').trigger('click')
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([12.5, 20])
+    expectLoop(10.025, 20)
 
-    // the selection is 7.5s now, so the next press moves by a quarter of that
     await button(wrapper, 'Move B').trigger('click')
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([12.5, 21.88])
+    expectLoop(10.025, 20.025)
   })
 
   it('halves and doubles the selection from A', async () => {
@@ -564,15 +566,16 @@ describe('AudioPane loop row', () => {
 })
 
 describe('AudioPane loop nudging', () => {
-  it('moves the loop by a quarter of its own length', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })]) // 20s long, so 5s a press
+  it('moves in fixed 25 ms steps, whatever the loop is', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })])
     await button(wrapper, 'Nudge right').trigger('click')
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([15, 35])
+    expect(engine.loopB.value).toBeCloseTo(30.025, 5)
 
-    // now 20s still, but after halving it the step halves with it
+    // a much shorter selection steps by exactly the same amount
     await button(wrapper, 'Halve selection').trigger('click')
     await button(wrapper, 'Nudge right').trigger('click')
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([17.5, 27.5])
+    expect(engine.loopA.value).toBeCloseTo(10.05, 5)
+    expect(engine.loopB.value).toBeCloseTo(20.05, 5)
   })
 
   it('does not move anything when there is no selection', async () => {

@@ -143,12 +143,10 @@ const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
 
 const hasLoop = computed(() => loopA.value != null && loopB.value != null)
 
-// a quarter of the selection, so the arrows stay useful whether the loop is a bar or a
-// whole section instead of crawling in fixed tenths of a second
-const nudgeStep = computed(() => (hasLoop.value ? (loopB.value! - loopA.value!) / 4 : 0))
+const NUDGE = 0.025 // seconds a single arrow press moves a loop point
 
 function nudgeLoop(direction: -1 | 1) {
-  const delta = direction * nudgeStep.value
+  const delta = direction * NUDGE
   if (loopTarget.value != 'b' && loopA.value != null) loopA.value = Math.max(0, loopA.value + delta)
   if (loopTarget.value != 'a' && loopB.value != null) loopB.value = Math.min(trackDuration.value, loopB.value + delta)
   keepLoopOrdered()
@@ -164,7 +162,7 @@ function scaleLoop(factor: number) {
 // a nudge or a scale must never leave B at or before A
 function keepLoopOrdered() {
   if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value)
-    loopA.value = Math.max(0, loopB.value - 0.05)
+    loopA.value = Math.max(0, loopB.value - NUDGE)
 }
 
 function clearLoop() {
