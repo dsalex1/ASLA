@@ -9,6 +9,8 @@
     "seed": "node scripts/seedEmulator.mjs",
     "emulators": "firebase emulators:start --project demo-asla",
     "build": "vue-tsc -b && vite build",
+    "build:beta": "vue-tsc -b && vite build --mode beta",
+    "deploy:beta": "node scripts/deployBeta.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

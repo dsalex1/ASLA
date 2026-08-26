@@ -1,5 +1,6 @@
 import AudioPane from '@/components/AudioPane.vue'
 import JogStrip from '@/components/JogStrip.vue'
+import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { AudioTrack, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
@@ -14,6 +15,7 @@ const engine = {
   error: ref(''),
   tempo: ref(1),
   pitch: ref(0),
+  gainDb: ref(0),
   loopA: ref<number | null>(null),
   loopB: ref<number | null>(null),
   load: vi.fn(() => Promise.resolve()),
@@ -21,6 +23,14 @@ const engine = {
   pause: vi.fn(),
   toggle: vi.fn(),
   seek: vi.fn((t: number) => (engine.currentTime.value = t)),
+  // one sample per peak bucket, so a sample's index is the bucket it belongs in
+  levels: vi.fn(() => ({
+    pre: new Float32Array([0.1, 0.2, 0.3, 0.8]),
+    post: new Float32Array([0.1, 0.2, 0.3, 0.5]),
+    sampleRate: 100,
+    latency: 0,
+    reduction: -4,
+  })),
   skip: vi.fn(),
 }
 vi.mock('@/composables/useAudioEngine', () => ({ useAudioEngine: () => engine }))
@@ -48,6 +58,7 @@ const song = (tracks: AudioTrack[], over: Partial<Song> = {}): Song => ({
 })
 
 const mountPane = async (tracks: AudioTrack[] = [track()]) => {
+  localStorage.setItem('audio.loopBar', 'true') // most tests want the loop row in reach
   const wrapper = mount(AudioPane, { props: { song: song(tracks), hasPrev: false, hasNext: false, view: 'waveform' } })
   await flushPromises()
   return wrapper
@@ -59,11 +70,13 @@ const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear() // the monitor toggle and the output choice live there
   Object.assign(engine, { currentTime: ref(0), duration: ref(100), playing: ref(false) })
   engine.tempo.value = 1
   engine.pitch.value = 0
   engine.loopA.value = null
   engine.loopB.value = null
+  engine.gainDb.value = 0
 })
 
 describe('AudioPane track loading', () => {
@@ -356,5 +369,217 @@ describe('AudioPane persistence', () => {
     const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
     expect(written.audioTracks[0]).not.toHaveProperty('loopA')
     expect(written.audioTracks[0]).not.toHaveProperty('loopB')
+  })
+})
+
+describe('AudioPane A-B move', () => {
+  const loop = () => [engine.loopA.value, engine.loopB.value]
+  const expectLoop = (a: number, b: number) => {
+    expect(engine.loopA.value).toBeCloseTo(a, 5)
+    expect(engine.loopB.value).toBeCloseTo(b, 5)
+  }
+
+  it('nudges both ends at once by default, keeping the length', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Nudge right').trigger('click')
+    expectLoop(10.025, 20.025)
+    await button(wrapper, 'Nudge left').trigger('click')
+    await button(wrapper, 'Nudge left').trigger('click')
+    expectLoop(9.975, 19.975)
+  })
+
+  it('moves only the selected end', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Move A').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expectLoop(10.025, 20)
+
+    await button(wrapper, 'Move B').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expectLoop(10.025, 20.025)
+  })
+
+  it('halves and doubles the selection from A', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    await button(wrapper, 'Halve selection').trigger('click')
+    expect(loop()).toEqual([10, 15])
+    await button(wrapper, 'Double selection').trigger('click')
+    expect(loop()).toEqual([10, 20])
+  })
+
+  it('clamps the selection to the track and never lets B pass A', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 90, duration: 100 })])
+    await button(wrapper, 'Double selection').trigger('click')
+    expect(loop()).toEqual([10, 100])
+
+    await button(wrapper, 'Move B').trigger('click')
+    engine.loopB.value = 10.05
+    await button(wrapper, 'Nudge left').trigger('click')
+    expect(engine.loopB.value).toBeGreaterThan(engine.loopA.value!)
+  })
+
+  it('disables the move buttons until both ends are set', async () => {
+    const wrapper = await mountPane([track()])
+    for (const label of ['Nudge left', 'Nudge right', 'Halve selection', 'Double selection'])
+      expect(button(wrapper, label).attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('AudioPane level trim', () => {
+  it('loads the trim from the track and steps it by 0.1 dB', async () => {
+    const wrapper = await mountPane([track({ gainDb: -3 })])
+    expect(engine.gainDb.value).toBe(-3)
+
+    await button(wrapper, 'Louder').trigger('click')
+    expect(engine.gainDb.value).toBe(-2.9)
+    await button(wrapper, 'Quieter').trigger('click')
+    await button(wrapper, 'Quieter').trigger('click')
+    expect(engine.gainDb.value).toBe(-3.1)
+  })
+
+  it('clamps the trim to 20 dB either way', async () => {
+    const wrapper = await mountPane([track({ gainDb: 19.95 })])
+    for (let i = 0; i < 5; i++) await button(wrapper, 'Louder').trigger('click')
+    expect(engine.gainDb.value).toBe(20)
+  })
+
+  it('stores the trim on the track, not globally', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountPane([track()])
+    await button(wrapper, 'Louder').trigger('click')
+    await vi.advanceTimersByTimeAsync(600)
+    vi.useRealTimers()
+
+    const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
+    expect(written.audioTracks[0].gainDb).toBe(0.1)
+  })
+})
+
+describe('AudioPane level monitoring', () => {
+  const canvas = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(WaveformCanvas)
+
+  it('tells the canvas to monitor, and hands it the gain to draw', async () => {
+    const wrapper = await mountPane([track({ gainDb: 6 })])
+    expect(canvas(wrapper).props('monitor')).toBe(false)
+    expect(canvas(wrapper).props('headroomDb')).toBe(0)
+
+    await button(wrapper, 'Monitor levels').trigger('click')
+    expect(canvas(wrapper).props('monitor')).toBe(true)
+    expect(canvas(wrapper).props('gainDb')).toBe(6)
+    // headroom only while monitoring, so the wave keeps the full height otherwise
+    expect(canvas(wrapper).props('headroomDb')).toBe(6)
+  })
+
+  it('places every sample at the position it was played at, not one reading per frame', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // the window ends at the playhead, so its last sample lands on 2s and the rest behind
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    ;[0.1, 0.2, 0.3, 0.5].forEach((v, i) => expect(trail[197 + i]).toBeCloseTo(v))
+    expect(canvas(wrapper).props('reduction')).toBe(-4)
+  })
+
+  it('shifts the window back by the latency the engine reports', async () => {
+    engine.levels.mockReturnValueOnce({ ...engine.levels(), latency: 0.02 })
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // two buckets of latency, so the loudest sample belongs at 1.98s rather than 2s
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    expect(trail[198]).toBeCloseTo(0.5)
+    expect(trail[200]).toBe(0)
+  })
+
+  it('stretches the window over more track time as the tempo rises', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.tempo.value = 2
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // a second of audio now covers two seconds of track, so the samples spread out
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    expect(trail[200]).toBeCloseTo(0.5)
+    expect(trail[198]).toBeCloseTo(0.3)
+    expect(trail[196]).toBeCloseTo(0.2)
+  })
+
+  it('ignores samples from before the start of the track', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 0.01
+    await flushPromises()
+
+    const trail = canvas(wrapper).props('outTrail') as Float32Array
+    ;[0.3, 0.5].forEach((v, i) => expect(trail[i]).toBeCloseTo(v))
+  })
+
+  it('records the gain reduction across the window the reading covers', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+
+    // reduction is reported as a negative dB figure and stored as a depth
+    const curve = canvas(wrapper).props('reductionTrail') as Float32Array
+    expect(curve[200]).toBe(4)
+    expect(curve[198]).toBe(4)
+    expect(curve[210]).toBe(0) // nothing written ahead of the playhead
+  })
+
+  it('starts the trail over when the gain changes, since old levels no longer apply', async () => {
+    const wrapper = await mountPane()
+    await button(wrapper, 'Monitor levels').trigger('click')
+    engine.playing.value = true
+    engine.currentTime.value = 2
+    await flushPromises()
+    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBeGreaterThan(0)
+
+    await button(wrapper, 'Louder').trigger('click')
+    await flushPromises()
+    expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBe(0)
+  })
+})
+
+describe('AudioPane loop row', () => {
+  it('keeps the loop controls out of the way until they are asked for', async () => {
+    localStorage.clear()
+    const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: false, hasNext: false, view: 'waveform' } })
+    await flushPromises()
+    expect(button(wrapper, 'Clear A-B')).toBeUndefined()
+
+    await button(wrapper, 'Show loop controls').trigger('click')
+    expect(button(wrapper, 'Clear A-B')).toBeTruthy()
+    expect(button(wrapper, 'Halve selection')).toBeTruthy()
+    expect(localStorage.getItem('audio.loopBar')).toBe('true')
+  })
+})
+
+describe('AudioPane loop nudging', () => {
+  it('moves in fixed 25 ms steps, whatever the loop is', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })])
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect(engine.loopB.value).toBeCloseTo(30.025, 5)
+
+    // a much shorter selection steps by exactly the same amount
+    await button(wrapper, 'Halve selection').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect(engine.loopA.value).toBeCloseTo(10.05, 5)
+    expect(engine.loopB.value).toBeCloseTo(20.05, 5)
+  })
+
+  it('does not move anything when there is no selection', async () => {
+    const wrapper = await mountPane([track({ loopA: 5 })])
+    expect(button(wrapper, 'Nudge right').attributes('disabled')).toBeDefined()
   })
 })

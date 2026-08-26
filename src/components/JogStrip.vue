@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const props = defineProps<{
   /** how far one pixel of drag moves the value */
@@ -48,9 +48,18 @@ function onReset() {
   if (props.resetTo != null) value.value = props.resetTo
 }
 
+// A write to the model only comes back on the next render, so several wheel events in
+// one tick would all read the same stale value and collapse into a single step. The
+// pending value carries the ones in between; an update from anywhere else clears it.
+let pending: number | null = null
+watch(value, (v) => {
+  if (v !== pending) pending = null
+})
+
 function onWheel(e: WheelEvent) {
   e.preventDefault()
-  value.value = quantise(value.value + (e.deltaY > 0 ? -props.step : props.step))
+  pending = quantise((pending ?? value.value) + (e.deltaY > 0 ? -props.step : props.step))
+  value.value = pending
 }
 </script>
 

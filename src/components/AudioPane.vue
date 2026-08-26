@@ -2,10 +2,12 @@
 import JogStrip from '@/components/JogStrip.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
+import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
+import { estimateLag, Reading } from '@/helpers/levelAlign'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song } from '@/types'
-import { useDebounceFn } from '@vueuse/core'
+import { useDebounceFn, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, ref, watch } from 'vue'
 
@@ -29,7 +31,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, loopA, loopB } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
@@ -64,6 +66,7 @@ watch(
     loopB.value = current.loopB ?? null
     tempo.value = current.tempo ?? 1
     pitch.value = current.pitch ?? 0
+    gainDb.value = current.gainDb ?? 0
     span.value = Math.min(DEFAULT_SPAN, current.duration)
     peaks.value = new Uint8Array()
     peaks.value = await loadPeaks(current)
@@ -78,7 +81,7 @@ const persist = useDebounceFn(() => {
   const updated = tracks.value.map((t, i) => {
     if (i !== trackIndex.value) return t
     // Firestore rejects undefined, so a cleared A-B has to be left out entirely
-    const next: AudioTrack = { ...t, markers: markers.value, tempo: tempo.value, pitch: pitch.value }
+    const next: AudioTrack = { ...t, markers: markers.value, tempo: tempo.value, pitch: pitch.value, gainDb: gainDb.value }
     delete next.loopA
     delete next.loopB
     if (loopA.value != null) next.loopA = loopA.value
@@ -88,7 +91,7 @@ const persist = useDebounceFn(() => {
   updateDoc(doc(songCollection, props.song.id), { audioTracks: updated, selectedAudioTrack: trackIndex.value })
 }, 500)
 
-watch([markers, loopA, loopB, tempo, pitch, trackIndex], persist, { deep: true })
+watch([markers, loopA, loopB, tempo, pitch, gainDb, trackIndex], persist, { deep: true })
 
 // --- markers ---
 const nearestMarker = (seconds: number) =>
@@ -135,6 +138,33 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   }
 }
 
+/** which end the arrows move: 'a', 'b', or both at once keeping the length */
+const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
+
+const hasLoop = computed(() => loopA.value != null && loopB.value != null)
+
+const NUDGE = 0.025 // seconds a single arrow press moves a loop point
+
+function nudgeLoop(direction: -1 | 1) {
+  const delta = direction * NUDGE
+  if (loopTarget.value != 'b' && loopA.value != null) loopA.value = Math.max(0, loopA.value + delta)
+  if (loopTarget.value != 'a' && loopB.value != null) loopB.value = Math.min(trackDuration.value, loopB.value + delta)
+  keepLoopOrdered()
+}
+
+/** halve or double the selection, keeping A where it is */
+function scaleLoop(factor: number) {
+  if (loopA.value == null || loopB.value == null) return
+  loopB.value = Math.min(trackDuration.value, loopA.value + (loopB.value - loopA.value) * factor)
+  keepLoopOrdered()
+}
+
+// a nudge or a scale must never leave B at or before A
+function keepLoopOrdered() {
+  if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value)
+    loopA.value = Math.max(0, loopB.value - NUDGE)
+}
+
 function clearLoop() {
   loopA.value = null
   loopB.value = null
@@ -176,6 +206,103 @@ const tempoJogRange = computed(() =>
 )
 const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
 
+// --- level trim: no web API reaches the system volume, so this is the app's own gain
+// stage. It belongs to the track, which is the point: it evens out backing tracks that
+// were mastered at different levels. ---
+const GAIN_LIMIT = 20 // dB either way
+
+
+const adjustGain = (delta: number) =>
+  (gainDb.value = Math.round(Math.max(-GAIN_LIMIT, Math.min(GAIN_LIMIT, gainDb.value + delta)) * 100) / 100)
+
+const gainLabel = computed(() => `${gainDb.value > 0 ? '+' : ''}${gainDb.value.toFixed(2)} dB`)
+const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100)}%`)
+
+
+// --- level monitoring: what the gain and the limiter are actually doing, measured off
+// the live signal and painted onto the waveform as the track plays ---
+const loopBarOpen = useLocalStorage('audio.loopBar', false)
+const monitor = useLocalStorage('audio.monitor', false)
+const outTrail = ref<Float32Array | null>(null)
+const reductionTrail = ref<Float32Array | null>(null)
+const reduction = ref(0)
+
+// the wave after the gain is a plain vertical stretch of the source, so it is drawn
+// straight from the peaks; only what the limiter does has to be measured
+const MONITOR_HEADROOM = 6 // dB kept above 0 dBFS while monitoring
+
+// the measurement runs behind the playhead by an amount only the device knows, so it is
+// found by matching what arrives against the peaks it should look like
+const ALIGN_HISTORY = 3 // seconds of readings to match over
+const ALIGN_EVERY = 0.5 // seconds between re-matches
+const ALIGN_TRUST = 0.6 // correlation below this is not a match worth moving to
+const lag = ref(0)
+let readings: Reading[] = []
+let lastAligned = -Infinity
+
+function realign(at: number) {
+  const best = estimateLag(readings, peaks.value)
+  // ease towards it, so one poor stretch of audio cannot yank the whole overlay
+  if (best.score >= ALIGN_TRUST) lag.value = lag.value * 0.6 + best.lag * 0.4
+  lastAligned = at
+}
+
+function resetTrails() {
+  readings = []
+  const buckets = Math.ceil(trackDuration.value * PEAKS_PER_SECOND) + 1
+  outTrail.value = new Float32Array(buckets)
+  reductionTrail.value = new Float32Array(buckets)
+  reduction.value = 0
+}
+
+// what the limiter did at one gain says nothing about another, so changing it starts over
+watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails())
+
+/**
+ * Each sample in the window is placed at the position it was actually played at, so the
+ * trail lands on the same time axis as the waveform underneath it and carries the
+ * waveform's own resolution rather than one reading per animation frame.
+ *
+ * A frame covers ~17 ms of wall clock and the window holds ~43 ms, so every bucket is
+ * measured even at high tempo, where each real second covers several track seconds.
+ */
+function record(trail: Float32Array, samples: Float32Array, endsAt: number, trackSecondsPerSample: number) {
+  for (let i = samples.length - 1; i >= 0; i--) {
+    const bucket = Math.round((endsAt - (samples.length - 1 - i) * trackSecondsPerSample) * PEAKS_PER_SECOND)
+    if (bucket < 0) break // wound back past the start of the track
+    if (bucket >= trail.length) continue
+    const level = Math.abs(samples[i])
+    if (level > trail[bucket]) trail[bucket] = level
+  }
+}
+
+// currentTime advances once per animation frame while playing, which is exactly when
+// there is a fresh window of samples to measure
+watch(currentTime, (at) => {
+  if (!monitor.value || !playing.value || !outTrail.value || !reductionTrail.value) return
+  const { pre, post, sampleRate, latency, reduction: gr } = engine.levels()
+  reduction.value = gr
+  if (!lag.value) lag.value = latency * tempo.value // a starting point until the first match
+
+  // the signal ahead of the limiter is the source scaled, so it is what the offset is
+  // measured against; it is never drawn, since the gain is drawn from the peaks instead
+  let loudest = 0
+  for (let i = 0; i < pre.length; i++) if (Math.abs(pre[i]) > loudest) loudest = Math.abs(pre[i])
+  readings.push({ at, level: loudest })
+  while (readings.length && readings[0].at < at - ALIGN_HISTORY) readings.shift()
+  if (at - lastAligned >= ALIGN_EVERY) realign(at)
+
+  const endsAt = at - lag.value
+  const trackSecondsPerSample = tempo.value / sampleRate
+  record(outTrail.value, post, endsAt, trackSecondsPerSample)
+
+  // one reduction figure covers the whole window, so it is written across every bucket
+  // the window spans rather than pinned to its end
+  const first = Math.max(0, Math.round((endsAt - post.length * trackSecondsPerSample) * PEAKS_PER_SECOND))
+  const last = Math.min(Math.round(endsAt * PEAKS_PER_SECOND), reductionTrail.value.length - 1)
+  for (let i = first; i <= last; i++) reductionTrail.value[i] = Math.max(reductionTrail.value[i], -gr)
+})
+
 const hasAudio = computed(() => !!track.value)
 const trackDuration = computed(() => duration.value || track.value?.duration || 0)
 const viewModes = computed(() =>
@@ -209,6 +336,12 @@ defineExpose({ position: currentTime })
         :loopA="loopA"
         :loopB="loopB"
         :position="currentTime"
+        :monitor="monitor"
+        :gainDb="gainDb"
+        :outTrail="outTrail"
+        :reductionTrail="reductionTrail"
+        :reduction="reduction"
+        :headroomDb="monitor ? MONITOR_HEADROOM : 0"
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
@@ -217,6 +350,17 @@ defineExpose({ position: currentTime })
       <div v-if="view != 'waveform'" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
         <slot name="view" :position="currentTime" :playing="playing" />
       </div>
+      <button
+        v-if="hasAudio && view == 'waveform'"
+        class="monitor-toggle"
+        :class="{ 'monitor-toggle--on': monitor }"
+        aria-label="Monitor levels"
+        title="Show measured levels on the waveform"
+        @click="monitor = !monitor"
+      >
+        <i class="fas fa-chart-simple" />
+      </button>
+
       <div v-if="loading || error" class="loading-badge">{{ error || 'Loading audio…' }}</div>
     </div>
 
@@ -255,6 +399,20 @@ defineExpose({ position: currentTime })
         <button class="tbtn tbtn--glyph" aria-label="Pitch up" @click="adjustPitch(1)">♯</button>
       </div>
 
+      <div class="group">
+        <button class="tbtn" aria-label="Quieter" @click="adjustGain(-0.1)"><i class="fas fa-volume-low" /></button>
+        <JogStrip
+          v-model="gainDb"
+          :step="0.01"
+          :min="-GAIN_LIMIT"
+          :max="GAIN_LIMIT"
+          :resetTo="0"
+          :label="gainLabel"
+          :sub="gainPercent"
+        />
+        <button class="tbtn" aria-label="Louder" @click="adjustGain(0.1)"><i class="fas fa-volume-high" /></button>
+      </div>
+
       <span class="stamp">-{{ stamp(trackDuration - currentTime) }}</span>
     </div>
 
@@ -275,16 +433,47 @@ defineExpose({ position: currentTime })
       <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">No audio available</div>
     </div>
 
-    <!-- A-B, transport and the view switch -->
+    <!-- everything to do with the A-B loop, kept out of the way until asked for -->
+    <div v-if="hasAudio && loopBarOpen" class="controls loop-row">
+      <div class="group">
+        <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
+        <button class="tbtn" aria-label="Clear A-B" @click="clearLoop"><i class="fas fa-times" /></button>
+        <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
+      </div>
+
+      <div class="group">
+          <button
+            v-for="t in (['a', 'ab', 'b'] as const)"
+            :key="t"
+            class="tbtn"
+            :class="{ 'tbtn--on': loopTarget == t }"
+            :aria-label="{ a: 'Move A', ab: 'Move A and B', b: 'Move B' }[t]"
+            @click="loopTarget = t"
+          >
+            {{ { a: 'A', ab: '⇄', b: 'B' }[t] }}
+          </button>
+          <button class="tbtn" aria-label="Nudge left" :disabled="!hasLoop" @click="nudgeLoop(-1)"><i class="fas fa-arrow-left" /></button>
+          <button class="tbtn" aria-label="Nudge right" :disabled="!hasLoop" @click="nudgeLoop(1)"><i class="fas fa-arrow-right" /></button>
+          <button class="tbtn" aria-label="Halve selection" :disabled="!hasLoop" @click="scaleLoop(0.5)">½</button>
+          <button class="tbtn" aria-label="Double selection" :disabled="!hasLoop" @click="scaleLoop(2)">x2</button>
+      </div>
+    </div>
+
+    <!-- transport and the view switch -->
     <div class="controls">
       <template v-if="hasAudio">
         <div class="group group--side">
           <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
             <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
           </select>
-          <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
-          <button class="tbtn" aria-label="Clear A-B" @click="clearLoop"><i class="fas fa-times" /></button>
-          <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
+          <button
+            class="tbtn"
+            :class="{ 'tbtn--on': loopBarOpen }"
+            :aria-label="loopBarOpen ? 'Hide loop controls' : 'Show loop controls'"
+            @click="loopBarOpen = !loopBarOpen"
+          >
+            <i class="fas fa-repeat" />
+          </button>
         </div>
 
         <div class="group group--centre">
@@ -297,6 +486,7 @@ defineExpose({ position: currentTime })
           <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
         </div>
       </template>
+
 
       <div class="group group--side segmented">
         <button
@@ -424,6 +614,12 @@ defineExpose({ position: currentTime })
   border-end-end-radius: 6px;
 }
 
+.loop-row {
+  justify-content: center;
+  gap: 24px;
+  border-top: 1px solid #1e1e1e;
+}
+
 .track-picker {
   height: 34px;
   max-width: 150px;
@@ -441,6 +637,28 @@ defineExpose({ position: currentTime })
 
 .no-audio {
   font-size: 13px;
+}
+
+.monitor-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+}
+.monitor-toggle:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ddd;
+}
+.monitor-toggle--on {
+  background: rgba(61, 220, 132, 0.18);
+  color: #3ddc84;
 }
 
 .loading-badge {

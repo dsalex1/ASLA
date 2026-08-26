@@ -34,6 +34,7 @@ export type AudioTrack = {
   loopB?: number
   tempo?: number // playback rate, 1 = original
   pitch?: number // semitones, -12..12
+  gainDb?: number // level trim in dB, 0 = untouched
 }
 
 export type Song = {

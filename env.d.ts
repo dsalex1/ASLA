@@ -15,6 +15,9 @@ interface ImportMetaEnv {
   readonly VITE_BASE_URL: string
 }
 
+/** which beta upload this is: '2', '3', ... and empty in any other build */
+declare const __BETA_BUILD__: string
+
 interface ImportMeta {
   readonly env: ImportMetaEnv
 } 

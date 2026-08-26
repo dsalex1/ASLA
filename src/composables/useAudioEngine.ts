@@ -18,13 +18,52 @@ export function useAudioEngine() {
   const pitch = ref(0)
   const loopA = ref<number | null>(null)
   const loopB = ref<number | null>(null)
+  const gainDb = ref(0)
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
   let shifter: PitchShifter | null = null
+  let gain: GainNode | null = null
+  let limiter: DynamicsCompressorNode | null = null
+  let preTap: AnalyserNode | null = null
+  let postTap: AnalyserNode | null = null
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
+
+  const amplitude = (db: number) => 10 ** (db / 20)
+
+  // ~43 ms at 48 kHz: comfortably longer than a frame, so no peak falls between reads
+  const TAP_WINDOW = 2048
+
+  /**
+   * shifter -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
+   * clip on its own, so a brick-wall limiter sits after it: it is inaudible while the
+   * signal stays under the threshold and only bites once the boost would have clipped.
+   */
+  function output() {
+    if (!gain) {
+      const ctx = audioContext()
+      limiter = ctx.createDynamicsCompressor()
+      limiter.threshold.value = -1
+      limiter.knee.value = 0
+      limiter.ratio.value = 20
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.1
+      limiter.connect(ctx.destination)
+      gain = ctx.createGain()
+      gain.gain.value = amplitude(gainDb.value)
+      gain.connect(limiter)
+      // side branches, so monitoring cannot colour what you hear
+      preTap = ctx.createAnalyser()
+      postTap = ctx.createAnalyser()
+      preTap.fftSize = postTap.fftSize = TAP_WINDOW
+      gain.connect(preTap)
+      limiter.connect(postTap)
+    }
+    return gain
+  }
+
 
   function teardownShifter() {
     shifter?.disconnect()
@@ -95,7 +134,7 @@ export function useAudioEngine() {
     if (loopA.value != null && loopB.value != null && (currentTime.value < loopA.value || currentTime.value >= loopB.value))
       seek(loopA.value)
     rebase()
-    s.connect(audioContext().destination)
+    s.connect(output())
     playing.value = true
     tick()
   }
@@ -111,6 +150,30 @@ export function useAudioEngine() {
   }
 
   const toggle = () => (playing.value ? pause() : play())
+
+  const preSamples = new Float32Array(TAP_WINDOW)
+  const postSamples = new Float32Array(TAP_WINDOW)
+
+  /**
+   * The most recent window of audio from either side of the limiter, as samples rather
+   * than one peak: a caller that knows where the playhead is can place every sample at
+   * the moment it belongs to, instead of smearing the whole window over one instant.
+   *
+   * `latency` is how far behind the playhead that window sits. The pitch shifter is a
+   * ScriptProcessor, so what it computed for a given position only reaches the graph a
+   * whole buffer later, and that offset is what would otherwise drag the readings late.
+   */
+  function levels() {
+    preTap?.getFloatTimeDomainData(preSamples)
+    postTap?.getFloatTimeDomainData(postSamples)
+    return {
+      pre: preSamples,
+      post: postSamples,
+      sampleRate: context?.sampleRate ?? 48000,
+      latency: BUFFER_SIZE / (context?.sampleRate ?? 48000),
+      reduction: limiter?.reduction ?? 0,
+    }
+  }
 
   const seekShifter = (seconds: number) => {
     if (shifter && duration.value) shifter.percentagePlayed = seconds / duration.value
@@ -131,13 +194,21 @@ export function useAudioEngine() {
     if (shifter) shifter.tempo = v
   })
   watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
+  // ramped rather than set, so dragging the trim does not click
+  watch(gainDb, (v) => gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01))
 
   onUnmounted(() => {
     teardownShifter()
     buffer = null
+    gain = null
+    limiter = null
+    preTap = postTap = null
     context?.close()
     context = null
   })
 
-  return { currentTime, duration, playing, loading, error, tempo, pitch, loopA, loopB, load, play, pause, toggle, seek, skip }
+  return {
+    currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
+    loopA, loopB, load, play, pause, toggle, seek, skip, levels,
+  }
 }
