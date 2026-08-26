@@ -31,7 +31,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB, limiterCeilingDb } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
@@ -39,6 +39,10 @@ const trackIndex = ref(startingTrack())
 const track = computed((): AudioTrack | undefined => tracks.value[trackIndex.value])
 const peaks = ref(new Uint8Array())
 const markers = ref<number[]>([])
+const hasAudio = computed(() => !!track.value)
+// the stored duration stands in until the file has decoded, so the whole track can be
+// zoomed to and scrubbed straight away
+const trackDuration = computed(() => duration.value || track.value?.duration || 0)
 
 // the playhead sits in the middle of the zoomed view, so the window follows from the
 // position and only its width is state; it may run past either end of the track
@@ -138,6 +142,11 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   }
 }
 
+// hiding the loop controls also stops the loop: the region stays, greyed out, but the
+// track plays straight through it
+const loopBarOpen = useLocalStorage('audio.loopBar', false)
+watch(loopBarOpen, (open) => (engine.loopEnabled.value = open), { immediate: true })
+
 /** which end the arrows move: 'a', 'b', or both at once keeping the length */
 const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
 
@@ -176,7 +185,7 @@ function toStart() {
   else engine.seek(0)
 }
 
-const zoom = (seconds: number) => (span.value = Math.max(2, Math.min(seconds, duration.value || span.value)))
+const zoom = (seconds: number) => (span.value = Math.max(2, Math.min(seconds, trackDuration.value || span.value)))
 
 const stamp = (seconds: number) => {
   const safe = Math.max(0, seconds)
@@ -212,6 +221,8 @@ const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
 const GAIN_LIMIT = 20 // dB either way
 
 
+const GAIN_STEP = 0.4 // dB per press of the volume buttons
+
 const adjustGain = (delta: number) =>
   (gainDb.value = Math.round(Math.max(-GAIN_LIMIT, Math.min(GAIN_LIMIT, gainDb.value + delta)) * 100) / 100)
 
@@ -221,7 +232,6 @@ const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100
 
 // --- level monitoring: what the gain and the limiter are actually doing, measured off
 // the live signal and painted onto the waveform as the track plays ---
-const loopBarOpen = useLocalStorage('audio.loopBar', false)
 const monitor = useLocalStorage('audio.monitor', false)
 const outTrail = ref<Float32Array | null>(null)
 const reductionTrail = ref<Float32Array | null>(null)
@@ -230,6 +240,7 @@ const reduction = ref(0)
 // the wave after the gain is a plain vertical stretch of the source, so it is drawn
 // straight from the peaks; only what the limiter does has to be measured
 const MONITOR_HEADROOM = 6 // dB kept above 0 dBFS while monitoring
+const IDLE_HEADROOM = 2 // and a little either way the rest of the time
 
 // the measurement runs behind the playhead by an amount only the device knows, so it is
 // found by matching what arrives against the peaks it should look like
@@ -256,7 +267,7 @@ function resetTrails() {
 }
 
 // what the limiter did at one gain says nothing about another, so changing it starts over
-watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails())
+watch([monitor, trackKey, gainDb], () => monitor.value && resetTrails(), { immediate: true })
 
 /**
  * Each sample in the window is placed at the position it was actually played at, so the
@@ -303,20 +314,10 @@ watch(currentTime, (at) => {
   for (let i = first; i <= last; i++) reductionTrail.value[i] = Math.max(reductionTrail.value[i], -gr)
 })
 
-const hasAudio = computed(() => !!track.value)
-const trackDuration = computed(() => duration.value || track.value?.duration || 0)
-const viewModes = computed(() =>
-  (['waveform', 'lyrics', 'chords'] as const).filter((m) => m != 'waveform' || hasAudio.value)
-)
-
-// nothing to show on the waveform when the song has no track
-watch(
-  hasAudio,
-  (audio) => {
-    if (!audio && view.value == 'waveform') view.value = 'lyrics'
-  },
-  { immediate: true }
-)
+const viewModes = ['waveform', 'lyrics', 'chords'] as const
+// a song without a track shows its lyrics instead, but stays in whatever mode it is in,
+// so stepping past it and back lands on the waveform again rather than on the lyrics
+const showsSlot = computed(() => view.value != 'waveform' || !hasAudio.value)
 
 defineExpose({ position: currentTime })
 </script>
@@ -335,19 +336,21 @@ defineExpose({ position: currentTime })
         :markers="markers"
         :loopA="loopA"
         :loopB="loopB"
+        :loopActive="loopBarOpen"
         :position="currentTime"
         :monitor="monitor"
         :gainDb="gainDb"
         :outTrail="outTrail"
         :reductionTrail="reductionTrail"
         :reduction="reduction"
-        :headroomDb="monitor ? MONITOR_HEADROOM : 0"
+        :ceilingDb="limiterCeilingDb"
+        :headroomDb="monitor ? MONITOR_HEADROOM : IDLE_HEADROOM"
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
         @zoom="zoom"
       />
-      <div v-if="view != 'waveform'" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
+      <div v-if="showsSlot" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
         <slot name="view" :position="currentTime" :playing="playing" />
       </div>
       <button
@@ -400,17 +403,17 @@ defineExpose({ position: currentTime })
       </div>
 
       <div class="group">
-        <button class="tbtn" aria-label="Quieter" @click="adjustGain(-0.1)"><i class="fas fa-volume-low" /></button>
+        <button class="tbtn" aria-label="Quieter" @click="adjustGain(-GAIN_STEP)"><i class="fas fa-volume-low" /></button>
         <JogStrip
           v-model="gainDb"
-          :step="0.01"
+          :step="0.02"
           :min="-GAIN_LIMIT"
           :max="GAIN_LIMIT"
           :resetTo="0"
           :label="gainLabel"
           :sub="gainPercent"
         />
-        <button class="tbtn" aria-label="Louder" @click="adjustGain(0.1)"><i class="fas fa-volume-high" /></button>
+        <button class="tbtn" aria-label="Louder" @click="adjustGain(GAIN_STEP)"><i class="fas fa-volume-high" /></button>
       </div>
 
       <span class="stamp">-{{ stamp(trackDuration - currentTime) }}</span>
@@ -427,6 +430,7 @@ defineExpose({ position: currentTime })
         :markers="markers"
         :loopA="loopA"
         :loopB="loopB"
+        :loopActive="loopBarOpen"
         :position="currentTime"
         @seek="engine.seek"
       />
@@ -461,31 +465,37 @@ defineExpose({ position: currentTime })
 
     <!-- transport and the view switch -->
     <div class="controls">
-      <template v-if="hasAudio">
-        <div class="group group--side">
-          <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
-            <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
-          </select>
-          <button
-            class="tbtn"
-            :class="{ 'tbtn--on': loopBarOpen }"
-            :aria-label="loopBarOpen ? 'Hide loop controls' : 'Show loop controls'"
-            @click="loopBarOpen = !loopBarOpen"
-          >
-            <i class="fas fa-repeat" />
-          </button>
-        </div>
+      <div class="group group--side">
+        <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
+          <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
+        </select>
+        <span v-else-if="track" class="track-name">{{ track.name }}</span>
+        <button
+          v-if="hasAudio"
+          class="tbtn"
+          :class="{ 'tbtn--on': loopBarOpen }"
+          :aria-label="loopBarOpen ? 'Hide loop controls' : 'Show loop controls'"
+          @click="loopBarOpen = !loopBarOpen"
+        >
+          <i class="fas fa-repeat" />
+        </button>
+      </div>
 
-        <div class="group group--centre">
-          <button class="tbtn" aria-label="Restart or previous song" @click="toStart"><i class="fas fa-backward-fast" /></button>
-          <button class="tbtn" aria-label="Back 10 seconds" @click="engine.skip(-SKIP)"><i class="fas fa-backward" /></button>
-          <button class="tbtn tbtn--play" :aria-label="playing ? 'Pause' : 'Play'" :disabled="!!error || loading" @click="engine.toggle">
-            <i :class="playing ? 'fas fa-pause' : 'fas fa-play'" />
-          </button>
-          <button class="tbtn" aria-label="Forward 10 seconds" @click="engine.skip(SKIP)"><i class="fas fa-forward" /></button>
-          <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
-        </div>
-      </template>
+      <!-- stepping between songs has to work on a song without a track too -->
+      <div class="group group--centre">
+        <button class="tbtn" aria-label="Restart or previous song" @click="toStart"><i class="fas fa-backward-fast" /></button>
+        <button class="tbtn" aria-label="Back 10 seconds" :disabled="!hasAudio" @click="engine.skip(-SKIP)"><i class="fas fa-backward" /></button>
+        <button
+          class="tbtn tbtn--play"
+          :aria-label="playing ? 'Pause' : 'Play'"
+          :disabled="!hasAudio || !!error || loading"
+          @click="engine.toggle"
+        >
+          <i :class="playing ? 'fas fa-pause' : 'fas fa-play'" />
+        </button>
+        <button class="tbtn" aria-label="Forward 10 seconds" :disabled="!hasAudio" @click="engine.skip(SKIP)"><i class="fas fa-forward" /></button>
+        <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
+      </div>
 
 
       <div class="group group--side segmented">
@@ -629,6 +639,16 @@ defineExpose({ position: currentTime })
   border-radius: 6px;
   background: #1d1d1d;
   color: #e8e8e8;
+}
+
+.track-name {
+  max-width: 150px;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #cfcfcf;
 }
 
 .view-pane {

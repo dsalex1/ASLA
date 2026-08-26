@@ -18,6 +18,8 @@ const engine = {
   gainDb: ref(0),
   loopA: ref<number | null>(null),
   loopB: ref<number | null>(null),
+  loopEnabled: ref(true),
+  limiterCeilingDb: ref<number | null>(null),
   load: vi.fn(() => Promise.resolve()),
   play: vi.fn(),
   pause: vi.fn(),
@@ -101,18 +103,30 @@ describe('AudioPane track loading', () => {
       expect(button(wrapper, 'chords')).toBeDefined()
     })
 
-    it('drops the waveform option and every audio control', async () => {
+    it('drops the controls that need a track, but keeps them in reach', async () => {
       const wrapper = await mountPane([])
-      expect(button(wrapper, 'waveform')).toBeUndefined()
-      for (const label of ['Play', 'Add marker', 'Faster', 'Clear A-B', 'Back 10 seconds'])
-        expect(button(wrapper, label)).toBeUndefined()
+      for (const label of ['Add marker', 'Faster', 'Clear A-B']) expect(button(wrapper, label)).toBeUndefined()
       expect(wrapper.findAllComponents(JogStrip)).toHaveLength(0)
+      for (const label of ['Play', 'Back 10 seconds']) expect(button(wrapper, label).attributes('disabled')).toBeDefined()
     })
 
-    it('switches away from the waveform view', async () => {
-      const wrapper = mount(AudioPane, { props: { song: song([]), hasPrev: false, hasNext: false, view: 'waveform' } })
+    it('still steps between songs', async () => {
+      const wrapper = mount(AudioPane, { props: { song: song([]), hasPrev: true, hasNext: true, view: 'waveform' } })
       await flushPromises()
-      expect(wrapper.emitted('update:view')!.at(-1)).toEqual(['lyrics'])
+      expect(button(wrapper, 'Next song').attributes('disabled')).toBeUndefined()
+      await button(wrapper, 'Restart or previous song').trigger('click')
+      expect(wrapper.emitted('prevSong')).toHaveLength(1)
+    })
+
+    it('shows the lyrics without giving up the waveform mode', async () => {
+      const wrapper = mount(AudioPane, {
+        props: { song: song([]), hasPrev: false, hasNext: false, view: 'waveform' },
+        slots: { view: '<p>the words</p>' },
+      })
+      await flushPromises()
+      expect(wrapper.emitted('update:view')).toBeUndefined()
+      expect(wrapper.text()).toContain('the words')
+      expect(button(wrapper, 'waveform')).toBeDefined()
     })
 
     it('tells the slot whether the audio is playing, so the lyrics can follow', async () => {
@@ -168,8 +182,10 @@ describe('AudioPane track loading', () => {
     expect(written.selectedAudioTrack).toBe(1)
   })
 
-  it('offers a picker only when there is more than one track', async () => {
-    expect((await mountPane()).find('select').exists()).toBe(false)
+  it('offers a picker only when there is more than one track, and names the single one', async () => {
+    const one = await mountPane()
+    expect(one.find('select').exists()).toBe(false)
+    expect(one.text()).toContain('Original')
     expect((await mountPane([track(), track({ name: 'Live' })])).find('select').exists()).toBe(true)
   })
 })
@@ -426,15 +442,15 @@ describe('AudioPane A-B move', () => {
 })
 
 describe('AudioPane level trim', () => {
-  it('loads the trim from the track and steps it by 0.1 dB', async () => {
+  it('loads the trim from the track and steps it by 0.4 dB', async () => {
     const wrapper = await mountPane([track({ gainDb: -3 })])
     expect(engine.gainDb.value).toBe(-3)
 
     await button(wrapper, 'Louder').trigger('click')
-    expect(engine.gainDb.value).toBe(-2.9)
+    expect(engine.gainDb.value).toBe(-2.6)
     await button(wrapper, 'Quieter').trigger('click')
     await button(wrapper, 'Quieter').trigger('click')
-    expect(engine.gainDb.value).toBe(-3.1)
+    expect(engine.gainDb.value).toBe(-3.4)
   })
 
   it('clamps the trim to 20 dB either way', async () => {
@@ -451,7 +467,7 @@ describe('AudioPane level trim', () => {
     vi.useRealTimers()
 
     const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
-    expect(written.audioTracks[0].gainDb).toBe(0.1)
+    expect(written.audioTracks[0].gainDb).toBe(0.4)
   })
 })
 
@@ -461,7 +477,7 @@ describe('AudioPane level monitoring', () => {
   it('tells the canvas to monitor, and hands it the gain to draw', async () => {
     const wrapper = await mountPane([track({ gainDb: 6 })])
     expect(canvas(wrapper).props('monitor')).toBe(false)
-    expect(canvas(wrapper).props('headroomDb')).toBe(0)
+    expect(canvas(wrapper).props('headroomDb')).toBe(2) // a little room over 0 dBFS even so
 
     await button(wrapper, 'Monitor levels').trigger('click')
     expect(canvas(wrapper).props('monitor')).toBe(true)
