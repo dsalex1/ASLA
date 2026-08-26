@@ -5,9 +5,10 @@ import { useAudioEngine } from '@/composables/useAudioEngine'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
 import { estimateLag, Reading } from '@/helpers/levelAlign'
+import { PANE_VIEW_ICONS, PANE_VIEWS } from '@/helpers/paneViews'
 import { songCollection } from '@/plugins/firebase'
-import { AudioTrack, Song } from '@/types'
-import { useDebounceFn, useLocalStorage } from '@vueuse/core'
+import { AudioTrack, PaneView, Song } from '@/types'
+import { useDebounceFn, useElementSize, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, ref, watch } from 'vue'
 
@@ -15,6 +16,10 @@ const props = defineProps<{
   song: Song
   hasPrev: boolean
   hasNext: boolean
+  /** the view on screen: the waveform, or whatever the caller puts in the slot */
+  shown: PaneView
+  /** which views this song has anything for, so the rest can be greyed out */
+  available: Record<PaneView, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -22,7 +27,7 @@ const emit = defineEmits<{
   (e: 'nextSong'): void
 }>()
 
-const view = defineModel<'waveform' | 'lyrics' | 'chords'>('view', { required: true })
+const view = defineModel<PaneView>('view', { required: true })
 
 const SKIP = 10 // seconds for the two skip buttons
 const SNAP = 1 // A/B snap to a marker this close
@@ -314,10 +319,14 @@ watch(currentTime, (at) => {
   for (let i = first; i <= last; i++) reductionTrail.value[i] = Math.max(reductionTrail.value[i], -gr)
 })
 
-const viewModes = ['waveform', 'lyrics', 'chords'] as const
-// a song without a track shows its lyrics instead, but stays in whatever mode it is in,
-// so stepping past it and back lands on the waveform again rather than on the lyrics
-const showsSlot = computed(() => view.value != 'waveform' || !hasAudio.value)
+// what fills the pane is the caller's decision: it knows which views the song can
+// actually serve, and hands the fallback in through the slot
+const showsSlot = computed(() => props.shown != 'waveform')
+
+// the sheet has to be sized to the space left over above the controls, which is a good
+// deal less than the window
+const viewPane = ref<HTMLElement | null>(null)
+const { height: viewHeight } = useElementSize(viewPane)
 
 defineExpose({ position: currentTime })
 </script>
@@ -327,7 +336,7 @@ defineExpose({ position: currentTime })
     <div class="flex-1-1-0" style="min-height: 0; position: relative">
       <WaveformCanvas
         v-if="hasAudio"
-        v-show="view == 'waveform'"
+        v-show="!showsSlot"
         draggable
         :peaks="peaks"
         :duration="trackDuration"
@@ -350,11 +359,11 @@ defineExpose({ position: currentTime })
         @moveLoop="setLoop"
         @zoom="zoom"
       />
-      <div v-if="showsSlot" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
-        <slot name="view" :position="currentTime" :playing="playing" />
+      <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
+        <slot name="view" :position="currentTime" :playing="playing" :height="viewHeight" />
       </div>
       <button
-        v-if="hasAudio && view == 'waveform'"
+        v-if="hasAudio && !showsSlot"
         class="monitor-toggle"
         :class="{ 'monitor-toggle--on': monitor }"
         aria-label="Monitor levels"
@@ -500,14 +509,15 @@ defineExpose({ position: currentTime })
 
       <div class="group group--side segmented">
         <button
-          v-for="mode in viewModes"
-          :key="mode"
+          v-for="v in PANE_VIEWS"
+          :key="v"
           class="tbtn"
-          :class="{ 'tbtn--on': view == mode }"
-          :aria-label="mode"
-          @click="view = mode"
+          :class="{ 'tbtn--on': view == v }"
+          :disabled="!available[v]"
+          :aria-label="v"
+          @click="view = v"
         >
-          <i :class="{ waveform: 'fas fa-wave-square', lyrics: 'fas fa-file-lines', chords: 'fas fa-music' }[mode]" />
+          <i :class="PANE_VIEW_ICONS[v]" />
         </button>
       </div>
     </div>
@@ -612,7 +622,8 @@ defineExpose({ position: currentTime })
 .segmented .tbtn {
   border-radius: 0;
   border-inline-width: 0 1px;
-  min-width: 42px;
+  min-width: 38px;
+  padding-inline: 6px;
 }
 .segmented .tbtn:first-child {
   border-left-width: 1px;

@@ -10,8 +10,9 @@ import SongInfoBar from '@/components/SongInfoBar.vue'
 import { useAnnotations } from '@/composables/useAnnotations'
 import { useFileContents } from '@/composables/useFileContents'
 import { createMetronome } from '@/helpers/metronome'
+import { PANE_VIEW_MISSING, sheetModeOfView, shownView, viewOfMode } from '@/helpers/paneViews'
 import { songCollection } from '@/plugins/firebase'
-import { CustomSetlistEntry, Song, ViewMode } from '@/types'
+import { CustomSetlistEntry, PaneView, Song, ViewMode } from '@/types'
 import { useElementSize, useSwipe, useWindowSize } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, onUnmounted, ref, toRef, watch } from 'vue'
@@ -27,11 +28,51 @@ const emit = defineEmits<{ (e: 'songDeleted'): void }>()
 const currentFileIndex = ref(0)
 const currentFilePage = ref(1)
 
-const { fileContents } = useFileContents(toRef(props, 'songs'), toRef(props, 'mode'))
+const currentSong = computed(() => props.songs[currentFileIndex.value])
+// a plain song, as opposed to a custom setlist entry
+const song = computed(() => (currentSong.value && 'name' in currentSong.value ? currentSong.value : undefined))
+
+// --- what the big pane is showing ---
+// The route mode only picks the view a song opens on. From there the switch in the audio
+// pane and the dropdown in the info bar move between all of them, and a view the current
+// song has nothing for falls back to the next best one without being given up, so
+// stepping over a song and back returns to the view you were in.
+const view = ref<PaneView>(viewOfMode(props.mode))
+
+// Which pdf the sheet panes resolve. It follows only the sheet views, so switching to the
+// lyrics and back does not throw the loaded file away, and a setlist opened on the audio
+// does not fetch a pdf until one is actually asked for.
+const sheetMode = ref<ViewMode>('lyrics')
+
+const { fileContents, sheetSources } = useFileContents(toRef(props, 'songs'), sheetMode)
+
+const available = computed<Record<PaneView, boolean>>(() => ({
+  waveform: !!song.value?.audioTracks?.length,
+  sheet: !!sheetSources.value[currentFileIndex.value]?.sheet,
+  drums: !!sheetSources.value[currentFileIndex.value]?.drums,
+  lyrics: !!song.value?.lyrics,
+  chords: !!song.value?.lyrics,
+}))
+
+const shown = computed(() => shownView(view.value, available.value))
+const showsSheet = computed(() => shown.value == 'sheet' || shown.value == 'drums')
+const showsLyrics = computed(() => shown.value == 'lyrics' || shown.value == 'chords')
+// the transport stays put while the setlist is in audio mode, so switching to the lyrics
+// or the sheet there does not cost you the controls
+const showsTransport = computed(() => !!song.value && (props.mode == 'audio' || shown.value == 'waveform'))
+
+watch(
+  shown,
+  (v) => {
+    if (v == 'sheet') sheetMode.value = 'chords'
+    else if (v == 'drums') sheetMode.value = 'drums'
+  },
+  { immediate: true }
+)
 
 const annotations = useAnnotations({
   songs: toRef(props, 'songs'),
-  mode: toRef(props, 'mode'),
+  mode: computed(() => sheetModeOfView(shown.value)),
   fileContents,
   fileIndex: currentFileIndex,
   page: currentFilePage,
@@ -62,7 +103,7 @@ const swipeTarget = ref<HTMLDivElement | null>(null)
 const { width: boxWidth, height: boxHeight } = useElementSize(swipeTarget)
 useSwipe(swipeTarget, {
   onSwipeEnd(_, direction) {
-    if (isAudio.value) return // a sideways drag there scrubs the waveform
+    if (shown.value == 'waveform') return // a sideways drag there scrubs the waveform
     if (direction === 'left') next()
     if (direction === 'right') prev()
   },
@@ -72,17 +113,9 @@ const annotTool = ref<'pen' | 'eraser'>('pen')
 const annotGray = ref(0)
 const annotWidth = ref(2)
 
-const currentSong = computed(() => props.songs[currentFileIndex.value])
-// a plain song, as opposed to a custom setlist entry
-const song = computed(() => (currentSong.value && 'name' in currentSong.value ? currentSong.value : undefined))
-
 // --- quick edit of the current song ---
 const editDialogOpen = ref(false)
 const editableSong = computed(() => (song.value?.id ? song.value : undefined))
-
-// audio mode swaps the big area between the waveform and the lyrics/chords panes
-const audioView = ref<'waveform' | 'lyrics' | 'chords'>('waveform')
-const isAudio = computed(() => props.mode == 'audio')
 
 function goToSong(delta: number) {
   const target = currentFileIndex.value + delta
@@ -91,16 +124,6 @@ function goToSong(delta: number) {
   currentFilePage.value = 1
 }
 
-const shallShowLyrics = ref(props.mode == 'lyrics')
-const hasSheet = computed(() => {
-  const file = fileContents.value[currentFileIndex.value]
-  return !!(file?.dataUrl || file?.urls.length)
-})
-const showLyrics = computed(
-  () => !isAudio.value && (shallShowLyrics.value || (fileContents.value.length > 0 && !hasSheet.value))
-)
-// the lyrics pane is on screen either way, so the font/autoscroll controls stay useful
-const lyricsOnScreen = computed(() => showLyrics.value || (isAudio.value && audioView.value != 'waveform'))
 const fontSize = ref(16)
 const autoScroll = ref(false)
 
@@ -140,6 +163,13 @@ function changeTranspose(delta: number) {
   transposeTarget = Math.max(-11, Math.min(11, (transposeTarget ?? transpose.value) + delta))
   saveSong({ transpose: transposeTarget })
 }
+
+// the pane fell back to the words because the song has nothing for the view that was asked for
+const noSheetHint = computed(() =>
+  showsLyrics.value && shown.value != view.value
+    ? `No ${PANE_VIEW_MISSING[view.value]} file - ${song.value?.name} - (${props.mode})`
+    : undefined
+)
 </script>
 
 <template>
@@ -186,12 +216,13 @@ function changeTranspose(delta: number) {
       :mode="mode"
       :annotatable="annotatable"
       :transpose="transpose"
-      :showLyrics="lyricsOnScreen"
+      :shown="shown"
+      :available="available"
       :canAnnotate="!!annotations.refPath.value"
       :annotLoading="annotations.loading.value"
       :bpm="currentBpm"
       :clicking="clicking"
-      v-model:shallShowLyrics="shallShowLyrics"
+      v-model:view="view"
       v-model:fontSize="fontSize"
       v-model:autoScroll="autoScroll"
       @annotate="annotations.start"
@@ -211,30 +242,41 @@ function changeTranspose(delta: number) {
       "
       ref="swipeTarget"
     >
-      <template v-if="!annot && !isAudio">
+      <template v-if="!annot && shown != 'waveform'">
         <div @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
         <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
       </template>
 
       <AudioPane
-        v-if="isAudio && song"
+        v-if="showsTransport && song"
         :key="currentFileIndex"
         class="w-100"
         style="position: absolute; inset: 0; z-index: 20"
         :song="song"
         :hasPrev="currentFileIndex > 0"
         :hasNext="currentFileIndex < fileContents.length - 1"
-        v-model:view="audioView"
+        :shown="shown"
+        :available="available"
+        v-model:view="view"
         @prevSong="goToSong(-1)"
         @nextSong="goToSong(1)"
       >
-        <template #view="{ position, playing }">
+        <template #view="{ position, playing, height: paneHeight }">
+          <SheetPane
+            v-if="showsSheet"
+            :files="fileContents"
+            :fileIndex="currentFileIndex"
+            :page="currentFilePage"
+            :height="Math.min(pdfHeight, paneHeight || pdfHeight)"
+          />
           <LyricsPane
+            v-else
             :song="song"
-            :lyricsMode="audioView == 'chords' ? 'chords' : 'lyrics'"
+            :lyricsMode="shown == 'chords' ? 'chords' : 'lyrics'"
             showModeration
+            :noSheetHint="noSheetHint"
             :fontSize="fontSize"
-            :transpose="audioView == 'chords' ? transpose : 0"
+            :transpose="shown == 'chords' ? transpose : 0"
             :position="position"
             :autoScroll="playing"
             @update:lyrics="(lyrics) => saveSong({ lyrics })"
@@ -258,15 +300,15 @@ function changeTranspose(delta: number) {
       />
 
       <LyricsPane
-        v-if="showLyrics && (currentSong === undefined || 'name' in currentSong)"
+        v-if="!showsTransport && showsLyrics && (currentSong === undefined || 'name' in currentSong)"
         :key="currentFileIndex"
         :song="song"
-        :lyricsMode="shallShowLyrics || !mode || mode == 'audio' ? 'lyrics' : mode"
-        :showModeration="shallShowLyrics"
-        :noSheetHint="shallShowLyrics != showLyrics ? `No sheet file - ${song?.name} - (${mode})` : undefined"
+        :lyricsMode="shown == 'chords' ? 'chords' : 'lyrics'"
+        :showModeration="shown == 'lyrics'"
+        :noSheetHint="noSheetHint"
         :fontSize="fontSize"
-        :transpose="mode == 'chords' ? transpose : 0"
-        :editable="annotatable && mode == 'chords' && !shallShowLyrics"
+        :transpose="shown == 'chords' ? transpose : 0"
+        :editable="annotatable && shown == 'chords'"
         v-model:autoScroll="autoScroll"
         @update:lyrics="(lyrics) => saveSong({ lyrics })"
       />
@@ -279,13 +321,15 @@ function changeTranspose(delta: number) {
         </div>
       </div>
 
+      <!-- kept mounted once a sheet has been resolved, so switching away and back does
+           not make the pdf renderer start over -->
       <SheetPane
-        v-if="mode != 'lyrics' && !annot"
+        v-if="!showsTransport && sheetMode != 'lyrics' && !annot"
         :files="fileContents"
         :fileIndex="currentFileIndex"
         :page="currentFilePage"
         :height="pdfHeight"
-        :hidden="showLyrics"
+        :hidden="!showsSheet"
       />
     </div>
 

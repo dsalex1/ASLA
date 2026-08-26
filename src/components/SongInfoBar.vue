@@ -1,22 +1,30 @@
 <script setup lang="ts">
 import { formatDuration, getSongInformation } from '@/helpers'
-import { Song, ViewMode } from '@/types'
+import { PANE_VIEW_ICONS, PANE_VIEW_LABELS, PANE_VIEWS } from '@/helpers/paneViews'
+import { PaneView, Song, ViewMode } from '@/types'
+import { computed } from 'vue'
 
 const props = defineProps<{
   song: Song
   mode?: ViewMode
   annotatable?: boolean
   transpose: number
-  showLyrics: boolean
+  /** the view actually on screen, which is the chosen one unless it fell back */
+  shown: PaneView
+  available: Record<PaneView, boolean>
   canAnnotate: boolean
   annotLoading?: boolean
   bpm: number
   clicking: boolean
 }>()
 
-const shallShowLyrics = defineModel<boolean>('shallShowLyrics', { required: true })
+const view = defineModel<PaneView>('view', { required: true })
 const fontSize = defineModel<number>('fontSize', { required: true })
 const autoScroll = defineModel<boolean>('autoScroll', { required: true })
+
+const showLyrics = computed(() => props.shown == 'lyrics' || props.shown == 'chords')
+// the button keeps naming the view you picked, so it agrees with the switch in the audio
+// pane; that the song had nothing for it is what the fallback's own hint is for
 
 defineEmits<{
   (e: 'annotate'): void
@@ -26,7 +34,7 @@ defineEmits<{
 
 const formatTranspose = (n: number) => (n > 0 ? `+${n}` : `${n}`)
 // chords can only be edited on the chord view of an annotatable song
-const editingChords = () => props.annotatable && props.mode == 'chords' && !shallShowLyrics.value && props.song.lyrics
+const editingChords = () => props.annotatable && props.shown == 'chords' && props.song.lyrics
 </script>
 
 <template>
@@ -37,20 +45,35 @@ const editingChords = () => props.annotatable && props.mode == 'chords' && !shal
       <v-icon size="sm" icon="far fa-clock mb-1 " />
       {{ formatDuration(song.duration) }}
     </span>
-    <v-chip v-if="mode == 'chords' && !annotatable && transpose" class="ms-2" size="small" color="primary">
+    <v-chip v-if="shown == 'chords' && !annotatable && transpose" class="ms-2" size="small" color="primary">
       <v-icon start size="x-small" icon="fas fa-music" />
       {{ formatTranspose(transpose) }}
     </v-chip>
-    <v-btn
-      v-if="song.lyrics && mode != 'lyrics'"
-      class="ms-2"
-      variant="tonal"
-      density="compact"
-      prepend-icon="fas fa-file-lines"
-      @click="shallShowLyrics = !shallShowLyrics"
-    >
-      {{ shallShowLyrics ? 'Sheets' : 'Lyrics' }}
-    </v-btn>
+    <v-menu>
+      <template #activator="{ props: menu }">
+        <v-btn
+          v-bind="menu"
+          class="ms-2"
+          variant="tonal"
+          density="compact"
+          :prepend-icon="PANE_VIEW_ICONS[view]"
+          append-icon="fas fa-caret-down"
+        >
+          {{ PANE_VIEW_LABELS[view] }}
+        </v-btn>
+      </template>
+      <v-list density="compact">
+        <v-list-item
+          v-for="v in PANE_VIEWS"
+          :key="v"
+          :disabled="!available[v]"
+          :active="view == v"
+          :prepend-icon="PANE_VIEW_ICONS[v]"
+          :title="PANE_VIEW_LABELS[v]"
+          @click="view = v"
+        />
+      </v-list>
+    </v-menu>
     <v-btn
       v-if="annotatable && canAnnotate && !showLyrics"
       class="ms-2"

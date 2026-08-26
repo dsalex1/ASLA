@@ -1,11 +1,17 @@
 import FileViewer from '@/components/FileViewer.vue'
-import { Song } from '@/types'
+import SongInfoBar from '@/components/SongInfoBar.vue'
+import { PaneView, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const metronome = { start: vi.fn(), stop: vi.fn() }
 vi.mock('@/helpers/metronome', () => ({ createMetronome: () => metronome }))
+// a song with a track would otherwise have the audio pane reach for the real files
+vi.mock('@/helpers/audioTracks', () => ({
+  loadPeaks: () => Promise.resolve(new Uint8Array(1000)),
+  audioUrl: () => Promise.resolve('blob:track'),
+}))
 
 const song = (over: Partial<Song> = {}): Song => ({ filename: 'a.pdf', name: 'Song A', ...over })
 
@@ -178,5 +184,75 @@ describe('FileViewer drums metronome', () => {
     await w.setProps({ songs: [song({ name: 'other', bpm: 90, lyrics: 'la' })] })
     await flushPromises()
     expect(metronome.stop).toHaveBeenCalled()
+  })
+})
+
+describe('FileViewer view switching', () => {
+  const infoBar = (w: ReturnType<typeof mount>) => w.findComponent(SongInfoBar)
+  const pick = async (w: ReturnType<typeof mount>, view: PaneView) => {
+    infoBar(w).vm.$emit('update:view', view)
+    await flushPromises()
+  }
+  const everything = song({
+    pdfStorageRef: 'a.pdf',
+    pdfImageStorageRefs: ['i/a1.webp'],
+    drumsPdfImageStorageRefs: ['d/a1.webp'],
+    lyrics: 'C\nla',
+    audioTracks: [{ name: 't', storageRef: 'a.mp3', peaksRef: 'a.peaks', duration: 10, markers: [] }],
+  })
+
+  it('opens on the view its mode asks for', async () => {
+    for (const [mode, view] of [
+      ['chords', 'sheet'],
+      ['drums', 'drums'],
+      ['lyrics', 'lyrics'],
+      ['audio', 'waveform'],
+    ] as const)
+      expect(infoBar(await mountViewer({ songs: [everything], mode })).props('view')).toBe(view)
+  })
+
+  it('reports which views the song has anything for', async () => {
+    const w = await mountViewer({ songs: [everything], mode: 'chords' })
+    expect(infoBar(w).props('available')).toEqual({ waveform: true, sheet: true, drums: true, lyrics: true, chords: true })
+
+    const bare = await mountViewer({ songs: [song({ lyrics: 'la' })], mode: 'chords' })
+    expect(infoBar(bare).props('available')).toEqual({
+      waveform: false,
+      sheet: false,
+      drums: false,
+      lyrics: true,
+      chords: true,
+    })
+  })
+
+  it('swaps the sheet for the drum chart without leaving the mode', async () => {
+    const w = await mountViewer({ songs: [everything], mode: 'chords' })
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+    await pick(w, 'drums')
+    expect(visibleImgs(w)).toEqual(['https://files.test/d/a1.webp'])
+  })
+
+  it('shows the words in place of a sheet the song has not got, keeping the view', async () => {
+    const w = await mountViewer({ songs: [everything, song({ name: 'B', lyrics: 'G\nwords' })], mode: 'chords' })
+    await nextArea(w).trigger('click') // onto the song with no sheet
+    await flushPromises()
+
+    expect(infoBar(w).props('view')).toBe('sheet') // the choice survives
+    expect(infoBar(w).props('shown')).toBe('chords') // a chart falls back to the chords, not the bare words
+    expect(w.text()).toContain('No sheet file')
+    expect(w.find('strong').text()).toBe('G')
+
+    await prevArea(w).trigger('click')
+    await flushPromises()
+    expect(infoBar(w).props('shown')).toBe('sheet')
+  })
+
+  it('keeps the sheet loaded while the words are on screen', async () => {
+    const w = await mountViewer({ songs: [everything], mode: 'chords' })
+    await pick(w, 'lyrics')
+    expect(w.find('img').exists()).toBe(true) // still mounted, only hidden
+    expect(visibleImgs(w)).toEqual([])
+    await pick(w, 'sheet')
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
   })
 })

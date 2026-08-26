@@ -1,7 +1,8 @@
 import AudioPane from '@/components/AudioPane.vue'
 import JogStrip from '@/components/JogStrip.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
-import { AudioTrack, Song } from '@/types'
+import { shownView } from '@/helpers/paneViews'
+import { AudioTrack, PaneView, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,9 +60,22 @@ const song = (tracks: AudioTrack[], over: Partial<Song> = {}): Song => ({
   ...over,
 })
 
+/** what the FileViewer would hand the pane for this song */
+const paneProps = (s: Song, over: { hasPrev?: boolean; hasNext?: boolean; view?: PaneView; shown?: PaneView } = {}) => {
+  const view = over.view ?? 'waveform'
+  const available = {
+    waveform: !!s.audioTracks?.length,
+    sheet: false,
+    drums: false,
+    lyrics: !!s.lyrics,
+    chords: !!s.lyrics,
+  }
+  return { song: s, hasPrev: false, hasNext: false, ...over, view, available, shown: over.shown ?? shownView(view, available) }
+}
+
 const mountPane = async (tracks: AudioTrack[] = [track()]) => {
   localStorage.setItem('audio.loopBar', 'true') // most tests want the loop row in reach
-  const wrapper = mount(AudioPane, { props: { song: song(tracks), hasPrev: false, hasNext: false, view: 'waveform' } })
+  const wrapper = mount(AudioPane, { props: paneProps(song(tracks)) })
   await flushPromises()
   return wrapper
 }
@@ -97,10 +111,9 @@ describe('AudioPane track loading', () => {
       expect(wrapper.text()).toContain('No audio available')
     })
 
-    it('still offers the lyrics and chords switcher', async () => {
+    it('still offers the whole view switcher', async () => {
       const wrapper = await mountPane([])
-      expect(button(wrapper, 'lyrics')).toBeDefined()
-      expect(button(wrapper, 'chords')).toBeDefined()
+      for (const v of ['waveform', 'sheet', 'drums', 'lyrics', 'chords']) expect(button(wrapper, v)).toBeDefined()
     })
 
     it('drops the controls that need a track, but keeps them in reach', async () => {
@@ -111,27 +124,34 @@ describe('AudioPane track loading', () => {
     })
 
     it('still steps between songs', async () => {
-      const wrapper = mount(AudioPane, { props: { song: song([]), hasPrev: true, hasNext: true, view: 'waveform' } })
+      const wrapper = mount(AudioPane, { props: paneProps(song([]), { hasPrev: true, hasNext: true }) })
       await flushPromises()
       expect(button(wrapper, 'Next song').attributes('disabled')).toBeUndefined()
       await button(wrapper, 'Restart or previous song').trigger('click')
       expect(wrapper.emitted('prevSong')).toHaveLength(1)
     })
 
+    it('greys out the views the song has nothing for', async () => {
+      const wrapper = mount(AudioPane, { props: paneProps(song([], { lyrics: 'la' })) })
+      await flushPromises()
+      for (const v of ['waveform', 'sheet', 'drums']) expect(button(wrapper, v).attributes('disabled')).toBeDefined()
+      for (const v of ['lyrics', 'chords']) expect(button(wrapper, v).attributes('disabled')).toBeUndefined()
+    })
+
     it('shows the lyrics without giving up the waveform mode', async () => {
       const wrapper = mount(AudioPane, {
-        props: { song: song([]), hasPrev: false, hasNext: false, view: 'waveform' },
+        props: paneProps(song([], { lyrics: 'the words' }), { view: 'waveform' }),
         slots: { view: '<p>the words</p>' },
       })
       await flushPromises()
       expect(wrapper.emitted('update:view')).toBeUndefined()
       expect(wrapper.text()).toContain('the words')
-      expect(button(wrapper, 'waveform')).toBeDefined()
+      expect(button(wrapper, 'waveform').classes()).toContain('tbtn--on')
     })
 
     it('tells the slot whether the audio is playing, so the lyrics can follow', async () => {
       const wrapper = mount(AudioPane, {
-        props: { song: song([track()]), hasPrev: false, hasNext: false, view: 'lyrics' },
+        props: paneProps(song([track()]), { view: 'lyrics', shown: 'lyrics' }),
         slots: { view: '<template #default="{ playing }"><p>{{ playing ? "following" : "still" }}</p></template>' },
       })
       await flushPromises()
@@ -143,7 +163,7 @@ describe('AudioPane track loading', () => {
 
     it('keeps showing the lyrics slot', async () => {
       const wrapper = mount(AudioPane, {
-        props: { song: song([]), hasPrev: false, hasNext: false, view: 'lyrics' },
+        props: paneProps(song([]), { view: 'lyrics', shown: 'lyrics' }),
         slots: { view: '<p>the words</p>' },
       })
       await flushPromises()
@@ -153,12 +173,7 @@ describe('AudioPane track loading', () => {
 
   it('starts on the track that was selected last time', async () => {
     const wrapper = mount(AudioPane, {
-      props: {
-        song: song([track(), track({ name: 'Live', storageRef: 'audio/live.mp3' })], { selectedAudioTrack: 1 }),
-        hasPrev: false,
-        hasNext: false,
-        view: 'waveform',
-      },
+      props: paneProps(song([track(), track({ name: 'Live', storageRef: 'audio/live.mp3' })], { selectedAudioTrack: 1 })),
     })
     await flushPromises()
     expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('1')
@@ -166,7 +181,7 @@ describe('AudioPane track loading', () => {
 
   it('falls back to the first track when the remembered one is gone', async () => {
     const wrapper = mount(AudioPane, {
-      props: { song: song([track()], { selectedAudioTrack: 3 }), hasPrev: false, hasNext: false, view: 'waveform' },
+      props: paneProps(song([track()], { selectedAudioTrack: 3 })),
     })
     await flushPromises()
     expect((wrapper.vm as unknown as { trackIndex: number }).trackIndex).toBe(0)
@@ -299,7 +314,7 @@ describe('AudioPane transport', () => {
   })
 
   it('restarts the song when pressed past the start', async () => {
-    const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: true, hasNext: true, view: 'waveform' } })
+    const wrapper = mount(AudioPane, { props: paneProps(song([track()]), { hasPrev: true, hasNext: true }) })
     await flushPromises()
     engine.currentTime.value = 30
     await button(wrapper, 'Restart or previous song').trigger('click')
@@ -308,7 +323,7 @@ describe('AudioPane transport', () => {
   })
 
   it('goes to the previous song when pressed near the start', async () => {
-    const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: true, hasNext: true, view: 'waveform' } })
+    const wrapper = mount(AudioPane, { props: paneProps(song([track()]), { hasPrev: true, hasNext: true }) })
     await flushPromises()
     engine.currentTime.value = 1
     await button(wrapper, 'Restart or previous song').trigger('click')
@@ -353,7 +368,7 @@ describe('AudioPane transport', () => {
 
   it('falls back to a tempo multiplier when the song has no bpm', async () => {
     const wrapper = mount(AudioPane, {
-      props: { song: { ...song([track()]), bpm: undefined }, hasPrev: false, hasNext: false, view: 'waveform' },
+      props: paneProps({ ...song([track()]), bpm: undefined }),
     })
     await flushPromises()
     expect(wrapper.findAllComponents(JogStrip)[0].props()).toMatchObject({ min: 0.25, max: 4, step: 0.01 })
@@ -570,7 +585,7 @@ describe('AudioPane level monitoring', () => {
 describe('AudioPane loop row', () => {
   it('keeps the loop controls out of the way until they are asked for', async () => {
     localStorage.clear()
-    const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: false, hasNext: false, view: 'waveform' } })
+    const wrapper = mount(AudioPane, { props: paneProps(song([track()])) })
     await flushPromises()
     expect(button(wrapper, 'Clear A-B')).toBeUndefined()
 
