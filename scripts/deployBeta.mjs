@@ -48,7 +48,7 @@ try {
   run('git', ['add', '-A'], staging)
   run('git', ['commit', '-q', '-m', `beta ${build} from ${capture('git', ['rev-parse', '--short', 'HEAD'])}`], staging)
   run('git', ['push', '-q', '--force', remote, 'master'], staging)
-  console.log(`\npublished to https://${remote.split('/').at(-2)}.github.io/${repoName}/`)
+  console.log(`\npublished beta ${build} to https://${remote.split('/').at(-2)}.github.io/${repoName}/`)
 } finally {
   rmSync(staging, { recursive: true, force: true })
 }
