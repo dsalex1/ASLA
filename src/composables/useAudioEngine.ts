@@ -26,11 +26,16 @@ export function useAudioEngine() {
   let shifter: PitchShifter | null = null
   let gain: GainNode | null = null
   let limiter: DynamicsCompressorNode | null = null
+  let preTap: AnalyserNode | null = null
+  let postTap: AnalyserNode | null = null
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
 
   const amplitude = (db: number) => 10 ** (db / 20)
+
+  // ~43 ms at 48 kHz: comfortably longer than a frame, so no peak falls between reads
+  const TAP_WINDOW = 2048
 
   /**
    * shifter -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
@@ -50,6 +55,12 @@ export function useAudioEngine() {
       gain = ctx.createGain()
       gain.gain.value = amplitude(gainDb.value)
       gain.connect(limiter)
+      // side branches, so monitoring cannot colour what you hear
+      preTap = ctx.createAnalyser()
+      postTap = ctx.createAnalyser()
+      preTap.fftSize = postTap.fftSize = TAP_WINDOW
+      gain.connect(preTap)
+      limiter.connect(postTap)
     }
     return gain
   }
@@ -155,6 +166,19 @@ export function useAudioEngine() {
 
   const toggle = () => (playing.value ? pause() : play())
 
+  const tapBuffer = new Float32Array(TAP_WINDOW)
+
+  function peakOf(tap: AnalyserNode | null) {
+    if (!tap) return 0
+    tap.getFloatTimeDomainData(tapBuffer)
+    let peak = 0
+    for (const v of tapBuffer) if (Math.abs(v) > peak) peak = Math.abs(v)
+    return peak
+  }
+
+  /** loudest sample since the last call, either side of the limiter, 0..1 */
+  const levels = () => ({ pre: peakOf(preTap), post: peakOf(postTap), reduction: limiter?.reduction ?? 0 })
+
   const seekShifter = (seconds: number) => {
     if (shifter && duration.value) shifter.percentagePlayed = seconds / duration.value
   }
@@ -183,12 +207,13 @@ export function useAudioEngine() {
     buffer = null
     gain = null
     limiter = null
+    preTap = postTap = null
     context?.close()
     context = null
   })
 
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb, outputDevice, canPickOutput,
-    loopA, loopB, load, play, pause, toggle, seek, skip,
+    loopA, loopB, load, play, pause, toggle, seek, skip, levels,
   }
 }
