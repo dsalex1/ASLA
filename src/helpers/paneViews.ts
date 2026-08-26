@@ -12,7 +12,7 @@ export const PANE_VIEW_ICONS: Record<PaneView, string> = {
 }
 
 export const PANE_VIEW_LABELS: Record<PaneView, string> = {
-  waveform: 'Waveform',
+  waveform: 'Playback',
   sheet: 'Sheet',
   drums: 'Drums',
   lyrics: 'Lyrics',

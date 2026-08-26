@@ -242,9 +242,9 @@ const noSheetHint = computed(() =>
       "
       ref="swipeTarget"
     >
-      <template v-if="!annot && shown != 'waveform'">
-        <div @click="prev()" style="position: absolute; top: 0; left: 0; width: 50%; height: 100%; z-index: 10"></div>
-        <div @click="next()" style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; z-index: 10"></div>
+      <template v-if="!annot && !showsTransport && shown != 'waveform'">
+        <div class="page-half" style="left: 0" @click="prev()"></div>
+        <div class="page-half" style="right: 0" @click="next()"></div>
       </template>
 
       <AudioPane
@@ -262,6 +262,13 @@ const noSheetHint = computed(() =>
         @nextSong="goToSong(1)"
       >
         <template #view="{ position, playing, height: paneHeight }">
+          <!-- the same page turn as everywhere else: without it the second page of a
+               sheet is out of reach while the transport is on screen. Only over a sheet,
+               though: the words are scrolled by hand here while the audio plays. -->
+          <template v-if="!annot && showsSheet">
+            <div class="page-half" style="left: 0" @click="prev()"></div>
+            <div class="page-half" style="right: 0" @click="next()"></div>
+          </template>
           <SheetPane
             v-if="showsSheet"
             :files="fileContents"
@@ -343,3 +350,14 @@ const noSheetHint = computed(() =>
     </v-dialog>
   </div>
 </template>
+
+<style scoped>
+/* tap either side to turn the page, whether the sheet stands alone or sits in the audio pane */
+.page-half {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  z-index: 10;
+}
+</style>

@@ -23,6 +23,11 @@ const fontSize = defineModel<number>('fontSize', { required: true })
 const autoScroll = defineModel<boolean>('autoScroll', { required: true })
 
 const showLyrics = computed(() => props.shown == 'lyrics' || props.shown == 'chords')
+
+// a short list reads at a glance, so the views this song has nothing for are left out
+// rather than shown greyed; the switch in the audio pane keeps them in place, where the
+// buttons are fixed positions you learn by muscle memory
+const offered = computed(() => PANE_VIEWS.filter((v) => props.available[v]))
 // the button keeps naming the view you picked, so it agrees with the switch in the audio
 // pane; that the song had nothing for it is what the fallback's own hint is for
 
@@ -64,9 +69,8 @@ const editingChords = () => props.annotatable && props.shown == 'chords' && prop
       </template>
       <v-list density="compact">
         <v-list-item
-          v-for="v in PANE_VIEWS"
+          v-for="v in offered"
           :key="v"
-          :disabled="!available[v]"
           :active="view == v"
           :prepend-icon="PANE_VIEW_ICONS[v]"
           :title="PANE_VIEW_LABELS[v]"

@@ -22,8 +22,8 @@ const mountViewer = async (props: InstanceType<typeof FileViewer>['$props']) => 
 }
 
 // the two invisible click halves that page forwards/backwards
-const nextArea = (w: ReturnType<typeof mount>) => w.findAll('div[style*="z-index: 10"]')[1]
-const prevArea = (w: ReturnType<typeof mount>) => w.findAll('div[style*="z-index: 10"]')[0]
+const nextArea = (w: ReturnType<typeof mount>) => w.findAll('.page-half')[1]
+const prevArea = (w: ReturnType<typeof mount>) => w.findAll('.page-half')[0]
 // only the wrapper with opacity 1 is on screen, and within it only the current page
 const visibleImgs = (w: ReturnType<typeof mount>) =>
   w
@@ -245,6 +245,22 @@ describe('FileViewer view switching', () => {
     await prevArea(w).trigger('click')
     await flushPromises()
     expect(infoBar(w).props('shown')).toBe('sheet')
+  })
+
+  it('turns the page of a sheet shown inside the audio pane', async () => {
+    const twoPages = { ...everything, pdfImageStorageRefs: ['i/a1.webp', 'i/a2.webp'] }
+    const w = await mountViewer({ songs: [twoPages], mode: 'audio' })
+    expect(w.findAll('.page-half')).toHaveLength(0) // nothing to turn on the waveform
+
+    await pick(w, 'sheet')
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+    await nextArea(w).trigger('click')
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a2.webp'])
+    await prevArea(w).trigger('click')
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+
+    await pick(w, 'lyrics')
+    expect(w.findAll('.page-half')).toHaveLength(0) // the words are scrolled by hand instead
   })
 
   it('keeps the sheet loaded while the words are on screen', async () => {

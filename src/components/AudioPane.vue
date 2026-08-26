@@ -359,7 +359,7 @@ defineExpose({ position: currentTime })
         @moveLoop="setLoop"
         @zoom="zoom"
       />
-      <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane" style="overflow: hidden">
+      <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane">
         <slot name="view" :position="currentTime" :playing="playing" :height="viewHeight" />
       </div>
       <button
@@ -662,7 +662,10 @@ defineExpose({ position: currentTime })
   color: #cfcfcf;
 }
 
+/* the caller lays its page-turn halves over this, so it has to be the containing block */
 .view-pane {
+  position: relative;
+  overflow: hidden;
   background: #fff;
 }
 

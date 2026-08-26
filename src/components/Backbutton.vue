@@ -1,6 +1,6 @@
 <template>
-  <RouterLink class="text-decoration-none h1 p-2 m-n2" :to="to"
-    ><v-btn icon="fas fa-angle-left" color="black" class="mt-n1 ms-n3 me-n2" variant="plain"></v-btn
+  <RouterLink class="text-decoration-none" :to="to"
+    ><v-btn icon="fas fa-angle-left" color="black" class="mt-n1 ms-0 me-n1" variant="plain"></v-btn
   ></RouterLink>
 </template>
 
