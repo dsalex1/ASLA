@@ -54,6 +54,11 @@ export default ({ mode }: { mode: string }) => {
         },
       }),
     ],
+    // stamped by scripts/deployBeta.mjs and deliberately not committed, so each beta
+    // upload is identifiable without a source change
+    define: {
+      __BETA_BUILD__: JSON.stringify(process.env.BETA_BUILD ?? ''),
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

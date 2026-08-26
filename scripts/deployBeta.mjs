@@ -27,7 +27,14 @@ const repoName = base.replace(/\//g, '')
 const origin = capture('git', ['remote', 'get-url', 'origin'])
 const remote = process.env.BETA_REMOTE ?? origin.replace(/[^/]+?(\.git)?$/, `${repoName}.git`)
 
-console.log(`building beta for ${base}`)
+// The counter lives in an untracked file so the version bump never becomes a commit.
+// It starts at 2: the first beta upload was the plain `-beta` build.
+const COUNTER = '.beta-build'
+const build = (existsSync(COUNTER) ? Number(readFileSync(COUNTER, 'utf8')) : 1) + 1
+writeFileSync(COUNTER, String(build))
+
+console.log(`building beta ${build} for ${base}`)
+process.env.BETA_BUILD = String(build)
 run('npm', ['run', 'build:beta'])
 if (!existsSync('dist-beta/index.html')) throw new Error('build produced no dist-beta/index.html')
 
@@ -39,7 +46,7 @@ try {
 
   run('git', ['init', '-q', '-b', 'master'], staging)
   run('git', ['add', '-A'], staging)
-  run('git', ['commit', '-q', '-m', `beta build from ${capture('git', ['rev-parse', '--short', 'HEAD'])}`], staging)
+  run('git', ['commit', '-q', '-m', `beta ${build} from ${capture('git', ['rev-parse', '--short', 'HEAD'])}`], staging)
   run('git', ['push', '-q', '--force', remote, 'master'], staging)
   console.log(`\npublished to https://${remote.split('/').at(-2)}.github.io/${repoName}/`)
 } finally {

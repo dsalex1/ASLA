@@ -32,3 +32,4 @@ backup_data
 public/__test-audio.mp3
 
 dist-beta
+.beta-build
