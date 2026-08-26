@@ -56,6 +56,9 @@ const COLORS = {
   reductionCurve: '#f2f2f2',
 }
 
+// enough of a ladder that some step always lands 6-12 rules across the view
+const TIME_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
+
 const CEILING_DB = -1 // where the limiter is set to hold the output
 const REDUCTION_RANGE = 24 // dB of gain reduction that fills the top half of the view
 
@@ -126,6 +129,34 @@ function drawDbGrid(ctx: CanvasRenderingContext2D) {
     ctx.fillStyle = COLORS.gridLabel
     // 0 dBFS sits on the canvas edge, so its label has to hang below the line
     ctx.fillText(`${db}`, 2, db === 0 ? top + 10 : top - 1)
+  }
+}
+
+/** m:ss, with tenths only when the rules are close enough together to need them */
+function timeLabel(seconds: number, step: number) {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  const whole = String(Math.floor(secs)).padStart(2, '0')
+  return step < 1 ? `${mins}:${whole}.${Math.round((secs % 1) * 10)}` : `${mins}:${whole}`
+}
+
+/** vertical rules on round times, so a position can be read off rather than guessed at */
+function drawTimeGrid(ctx: CanvasRenderingContext2D) {
+  const step = TIME_STEPS.find((s) => span.value / s <= 12) ?? TIME_STEPS[TIME_STEPS.length - 1]
+  ctx.strokeStyle = COLORS.grid
+  ctx.fillStyle = COLORS.gridLabel
+  ctx.lineWidth = 1
+  ctx.font = '9px sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'bottom'
+  for (let at = Math.ceil(props.start / step) * step; at <= props.end; at += step) {
+    if (at < 0 || at > props.duration) continue
+    const x = Math.round(xOf(at)) + 0.5
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, height.value)
+    ctx.stroke()
+    ctx.fillText(timeLabel(at, step), x + 2, height.value - 2)
   }
 }
 
@@ -313,7 +344,10 @@ function draw() {
   if (props.monitor && boost > 1) drawWave(ctx, COLORS.gainWave, boost)
   drawWave(ctx, props.overview ? COLORS.waveOverview : COLORS.wave)
   if (props.monitor && boost < 1) drawWave(ctx, COLORS.gainWave, boost)
-  if (!props.overview) drawDbGrid(ctx)
+  if (!props.overview) {
+    drawTimeGrid(ctx)
+    drawDbGrid(ctx)
+  }
 
   // A-B repeat region, drawn over the wave so the looped part reads as one block
   const { loopA, loopB } = props

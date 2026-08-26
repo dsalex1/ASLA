@@ -49,7 +49,7 @@ export function useAudioEngine() {
       limiter.knee.value = 0
       limiter.ratio.value = 20
       limiter.attack.value = 0.003
-      limiter.release.value = 0.25
+      limiter.release.value = 0.1
       limiter.connect(ctx.destination)
       gain = ctx.createGain()
       gain.gain.value = amplitude(gainDb.value)

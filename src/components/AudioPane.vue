@@ -4,6 +4,7 @@ import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
+import { estimateLag, Reading } from '@/helpers/levelAlign'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song } from '@/types'
 import { useDebounceFn, useLocalStorage } from '@vueuse/core'
@@ -228,7 +229,24 @@ const reduction = ref(0)
 // straight from the peaks; only what the limiter does has to be measured
 const MONITOR_HEADROOM = 6 // dB kept above 0 dBFS while monitoring
 
+// the measurement runs behind the playhead by an amount only the device knows, so it is
+// found by matching what arrives against the peaks it should look like
+const ALIGN_HISTORY = 3 // seconds of readings to match over
+const ALIGN_EVERY = 0.5 // seconds between re-matches
+const ALIGN_TRUST = 0.6 // correlation below this is not a match worth moving to
+const lag = ref(0)
+let readings: Reading[] = []
+let lastAligned = -Infinity
+
+function realign(at: number) {
+  const best = estimateLag(readings, peaks.value)
+  // ease towards it, so one poor stretch of audio cannot yank the whole overlay
+  if (best.score >= ALIGN_TRUST) lag.value = lag.value * 0.6 + best.lag * 0.4
+  lastAligned = at
+}
+
 function resetTrails() {
+  readings = []
   const buckets = Math.ceil(trackDuration.value * PEAKS_PER_SECOND) + 1
   outTrail.value = new Float32Array(buckets)
   reductionTrail.value = new Float32Array(buckets)
@@ -260,11 +278,19 @@ function record(trail: Float32Array, samples: Float32Array, endsAt: number, trac
 // there is a fresh window of samples to measure
 watch(currentTime, (at) => {
   if (!monitor.value || !playing.value || !outTrail.value || !reductionTrail.value) return
-  const { post, sampleRate, latency, reduction: gr } = engine.levels()
+  const { pre, post, sampleRate, latency, reduction: gr } = engine.levels()
   reduction.value = gr
-  // the window is already behind the playhead, and tempo decides how much track time a
-  // second of it covers
-  const endsAt = at - latency * tempo.value
+  if (!lag.value) lag.value = latency * tempo.value // a starting point until the first match
+
+  // the signal ahead of the limiter is the source scaled, so it is what the offset is
+  // measured against; it is never drawn, since the gain is drawn from the peaks instead
+  let loudest = 0
+  for (let i = 0; i < pre.length; i++) if (Math.abs(pre[i]) > loudest) loudest = Math.abs(pre[i])
+  readings.push({ at, level: loudest })
+  while (readings.length && readings[0].at < at - ALIGN_HISTORY) readings.shift()
+  if (at - lastAligned >= ALIGN_EVERY) realign(at)
+
+  const endsAt = at - lag.value
   const trackSecondsPerSample = tempo.value / sampleRate
   record(outTrail.value, post, endsAt, trackSecondsPerSample)
 

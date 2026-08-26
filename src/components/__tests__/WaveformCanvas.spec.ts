@@ -131,7 +131,9 @@ describe('WaveformCanvas drawing', () => {
     expect(line[playhead - 1]).toEqual(['moveTo', 250, 0])
   })
 
-  const markerLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => !l.startsWith('-') && l !== '0')
+  const dbLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => /^-?\d+$/.test(l))
+  // marker numbers are the white ones; the rules are drawn in the dimmer grid colour
+  const markerLabels = () => callsOf('fillText').filter((c) => c[4] === '#fff').map((c) => c[1] as string)
 
   it('fills the A-B region and redraws the wave clipped to it in orange', async () => {
     await render({ loopA: 2, loopB: 4 })
@@ -147,10 +149,22 @@ describe('WaveformCanvas drawing', () => {
     expect(markerLabels()).toEqual(['2']) // marker 1 is left of the window
   })
 
+  it('rules the view on round times, closer together as it zooms in', async () => {
+    const timeLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => l.includes(':'))
+
+    await render({ start: 0, end: 10 })
+    expect(timeLabels()).toEqual(['0:00', '0:01', '0:02', '0:03', '0:04', '0:05', '0:06', '0:07', '0:08', '0:09', '0:10'])
+
+    ctx = recordingContext()
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ctx) as never
+    // zoomed right in, whole seconds would give one rule, so it steps down to tenths
+    await render({ start: 4, end: 5 })
+    expect(timeLabels()).toContain('0:04.5')
+  })
+
   it('rules the view at fixed dB levels, placed by amplitude', async () => {
     await render({})
-    const labels = callsOf('fillText').map((c) => c[1])
-    expect(labels).toEqual(['0', '-3', '-6', '-12', '-18', '-24'])
+    expect(dbLabels()).toEqual(['0', '-3', '-6', '-12', '-18', '-24'])
 
     // -6 dB is half amplitude, so its line sits a quarter of the height from the middle
     const y = callsOf('moveTo').find((c) => Math.abs((c[2] as number) - HEIGHT / 4) < 1)

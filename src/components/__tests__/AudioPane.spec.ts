@@ -25,6 +25,7 @@ const engine = {
   seek: vi.fn((t: number) => (engine.currentTime.value = t)),
   // one sample per peak bucket, so a sample's index is the bucket it belongs in
   levels: vi.fn(() => ({
+    pre: new Float32Array([0.1, 0.2, 0.3, 0.8]),
     post: new Float32Array([0.1, 0.2, 0.3, 0.5]),
     sampleRate: 100,
     latency: 0,
