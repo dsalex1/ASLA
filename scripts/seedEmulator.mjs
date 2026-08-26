@@ -34,6 +34,50 @@ async function makePdf(title, pages) {
   return pdf.save()
 }
 
+/**
+ * A 60 s mono tone whose level rises and falls, so the waveform has a shape to look at
+ * and the loud stretch is close enough to full scale for a boost to hit the limiter.
+ * WAV rather than mp3: nothing here can encode one, and decodeAudioData takes both.
+ */
+function makeWav(seconds = 60, rate = 44100) {
+  const samples = seconds * rate
+  const data = Buffer.alloc(samples * 2)
+  for (let i = 0; i < samples; i++) {
+    const t = i / rate
+    // four bars of swell per 8 s, with a quiet verse and a loud chorus over the minute
+    const envelope = (0.35 + 0.6 * Math.abs(Math.sin((Math.PI * t) / 8))) * (t % 30 < 15 ? 0.45 : 0.95)
+    const tone = Math.sin(2 * Math.PI * 220 * t) * 0.7 + Math.sin(2 * Math.PI * 331 * t) * 0.3
+    data.writeInt16LE(Math.round(Math.max(-1, Math.min(1, tone * envelope)) * 32767), i * 2)
+  }
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + data.length, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16) // fmt chunk size
+  header.writeUInt16LE(1, 20) // PCM
+  header.writeUInt16LE(1, 22) // mono
+  header.writeUInt32LE(rate, 24)
+  header.writeUInt32LE(rate * 2, 28) // byte rate
+  header.writeUInt16LE(2, 32) // block align
+  header.writeUInt16LE(16, 34) // bits per sample
+  header.write('data', 36)
+  header.writeUInt32LE(data.length, 40)
+  return { bytes: Buffer.concat([header, data]), samples, rate, seconds }
+}
+
+/** the same one-byte-per-10-ms format computePeaks writes on upload */
+function makePeaks({ bytes, samples, rate }, perSecond = 100) {
+  const perBucket = Math.round(rate / perSecond)
+  const peaks = new Uint8Array(Math.ceil(samples / perBucket))
+  for (let bucket = 0; bucket < peaks.length; bucket++) {
+    let peak = 0
+    for (let i = bucket * perBucket; i < Math.min((bucket + 1) * perBucket, samples); i++)
+      peak = Math.max(peak, Math.abs(bytes.readInt16LE(44 + i * 2)) / 32768)
+    peaks[bucket] = Math.min(255, Math.round(peak * 255))
+  }
+  return peaks
+}
+
 try {
   await createUserWithEmailAndPassword(auth, 'user@user.com', 'useruser')
   console.log('created user user@user.com / useruser')
@@ -47,6 +91,10 @@ const drumsPdf = await makePdf('Test Song Drums', 2)
 await uploadBytes(ref(storage, 'test-song.pdf'), sheetPdf, { contentType: 'application/pdf' })
 await uploadBytes(ref(storage, 'drums/test-song-drums.pdf'), drumsPdf, { contentType: 'application/pdf' })
 
+const wav = makeWav()
+await uploadBytes(ref(storage, 'audio/test-song.wav'), wav.bytes, { contentType: 'audio/wav' })
+await uploadBytes(ref(storage, 'audio/test-song.peaks'), makePeaks(wav), { contentType: 'application/octet-stream' })
+
 await setDoc(doc(db, 'songs', 'test-song'), {
   filename: 'test-song.pdf',
   name: 'Test Song',
@@ -55,6 +103,15 @@ await setDoc(doc(db, 'songs', 'test-song'), {
   bpm: 120,
   duration: 180,
   lyrics: 'La la la\nTest lyrics line 2',
+  audioTracks: [
+    {
+      name: 'test-song',
+      storageRef: 'audio/test-song.wav',
+      peaksRef: 'audio/test-song.peaks',
+      duration: wav.seconds,
+      markers: [12, 30],
+    },
+  ],
 })
 
 // No lyrics: exercises the "Import from Ultimate Guitar" button in SongEdit.
@@ -103,5 +160,5 @@ await setDoc(doc(db, 'setlist', 'test-setlist'), {
   updatedAt: new Date().toISOString(),
 })
 
-console.log('seeded songs "Test Song" (3-page sheet, 2-page drums), "Chords Song" (chord lyrics) and setlist "Test Setlist"')
+console.log('seeded songs "Test Song" (3-page sheet, 2-page drums, 60 s audio track), "Chords Song" (chord lyrics) and setlist "Test Setlist"')
 process.exit(0)
