@@ -131,7 +131,7 @@ describe('WaveformCanvas drawing', () => {
     expect(line[playhead - 1]).toEqual(['moveTo', 250, 0])
   })
 
-  const markerLabels = () => callsOf('fillText').map((c) => c[1]).filter((l: string) => !l.startsWith('-') && l !== '0')
+  const markerLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => !l.startsWith('-') && l !== '0')
 
   it('fills the A-B region and redraws the wave clipped to it in orange', async () => {
     await render({ loopA: 2, loopB: 4 })
@@ -153,7 +153,7 @@ describe('WaveformCanvas drawing', () => {
     expect(labels).toEqual(['0', '-3', '-6', '-12', '-18', '-24'])
 
     // -6 dB is half amplitude, so its line sits a quarter of the height from the middle
-    const y = callsOf('moveTo').find((c) => c[2] > HEIGHT / 4 - 1 && c[2] < HEIGHT / 4 + 1)
+    const y = callsOf('moveTo').find((c) => Math.abs((c[2] as number) - HEIGHT / 4) < 1)
     expect(y).toBeTruthy()
   })
 

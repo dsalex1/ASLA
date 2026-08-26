@@ -65,7 +65,9 @@ export default ({ mode }: { mode: string }) => {
       },
     },
     build: {
-      outDir: 'docs',
+      // docs/ is what GitHub Pages serves for production and is committed; the beta
+      // build goes somewhere ignored so publishing it never touches the prod output
+      outDir: mode === 'beta' ? 'dist-beta' : 'docs',
       rollupOptions: {
         output: {
           inlineDynamicImports: true,
