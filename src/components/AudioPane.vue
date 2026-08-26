@@ -138,15 +138,17 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   }
 }
 
-const NUDGE = 0.1 // seconds a single arrow press moves a loop point
-
 /** which end the arrows move: 'a', 'b', or both at once keeping the length */
 const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
 
 const hasLoop = computed(() => loopA.value != null && loopB.value != null)
 
+// a quarter of the selection, so the arrows stay useful whether the loop is a bar or a
+// whole section instead of crawling in fixed tenths of a second
+const nudgeStep = computed(() => (hasLoop.value ? (loopB.value! - loopA.value!) / 4 : 0))
+
 function nudgeLoop(direction: -1 | 1) {
-  const delta = direction * NUDGE
+  const delta = direction * nudgeStep.value
   if (loopTarget.value != 'b' && loopA.value != null) loopA.value = Math.max(0, loopA.value + delta)
   if (loopTarget.value != 'a' && loopB.value != null) loopB.value = Math.min(trackDuration.value, loopB.value + delta)
   keepLoopOrdered()
@@ -161,7 +163,8 @@ function scaleLoop(factor: number) {
 
 // a nudge or a scale must never leave B at or before A
 function keepLoopOrdered() {
-  if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value) loopA.value = Math.max(0, loopB.value - NUDGE)
+  if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value)
+    loopA.value = Math.max(0, loopB.value - 0.05)
 }
 
 function clearLoop() {
@@ -220,6 +223,7 @@ const gainPercent = computed(() => `${Math.round(10 ** (gainDb.value / 20) * 100
 
 // --- level monitoring: what the gain and the limiter are actually doing, measured off
 // the live signal and painted onto the waveform as the track plays ---
+const loopBarOpen = useLocalStorage('audio.loopBar', false)
 const monitor = useLocalStorage('audio.monitor', false)
 const outTrail = ref<Float32Array | null>(null)
 const reductionTrail = ref<Float32Array | null>(null)
@@ -431,19 +435,15 @@ defineExpose({ position: currentTime })
       <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">No audio available</div>
     </div>
 
-    <!-- A-B, transport and the view switch -->
-    <div class="controls">
-      <template v-if="hasAudio">
-        <div class="group group--side">
-          <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
-            <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
-          </select>
-          <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
-          <button class="tbtn" aria-label="Clear A-B" @click="clearLoop"><i class="fas fa-times" /></button>
-          <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
-        </div>
+    <!-- everything to do with the A-B loop, kept out of the way until asked for -->
+    <div v-if="hasAudio && loopBarOpen" class="controls loop-row">
+      <div class="group">
+        <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
+        <button class="tbtn" aria-label="Clear A-B" @click="clearLoop"><i class="fas fa-times" /></button>
+        <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
+      </div>
 
-        <div class="group">
+      <div class="group">
           <button
             v-for="t in (['a', 'ab', 'b'] as const)"
             :key="t"
@@ -458,6 +458,24 @@ defineExpose({ position: currentTime })
           <button class="tbtn" aria-label="Nudge right" :disabled="!hasLoop" @click="nudgeLoop(1)"><i class="fas fa-arrow-right" /></button>
           <button class="tbtn" aria-label="Halve selection" :disabled="!hasLoop" @click="scaleLoop(0.5)">½</button>
           <button class="tbtn" aria-label="Double selection" :disabled="!hasLoop" @click="scaleLoop(2)">x2</button>
+      </div>
+    </div>
+
+    <!-- transport and the view switch -->
+    <div class="controls">
+      <template v-if="hasAudio">
+        <div class="group group--side">
+          <select v-if="tracks.length > 1" v-model="trackIndex" class="track-picker" aria-label="Audio track">
+            <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
+          </select>
+          <button
+            class="tbtn"
+            :class="{ 'tbtn--on': loopBarOpen }"
+            :aria-label="loopBarOpen ? 'Hide loop controls' : 'Show loop controls'"
+            @click="loopBarOpen = !loopBarOpen"
+          >
+            <i class="fas fa-repeat" />
+          </button>
         </div>
 
         <div class="group group--centre">
@@ -596,6 +614,12 @@ defineExpose({ position: currentTime })
 .segmented .tbtn:last-child {
   border-start-end-radius: 6px;
   border-end-end-radius: 6px;
+}
+
+.loop-row {
+  justify-content: center;
+  gap: 24px;
+  border-top: 1px solid #1e1e1e;
 }
 
 .track-picker {

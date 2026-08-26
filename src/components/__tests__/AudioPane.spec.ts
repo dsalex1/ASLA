@@ -58,6 +58,7 @@ const song = (tracks: AudioTrack[], over: Partial<Song> = {}): Song => ({
 })
 
 const mountPane = async (tracks: AudioTrack[] = [track()]) => {
+  localStorage.setItem('audio.loopBar', 'true') // most tests want the loop row in reach
   const wrapper = mount(AudioPane, { props: { song: song(tracks), hasPrev: false, hasNext: false, view: 'waveform' } })
   await flushPromises()
   return wrapper
@@ -376,23 +377,24 @@ describe('AudioPane A-B move', () => {
   const round = () => loop().map((v) => (v == null ? v : Math.round(v * 100) / 100))
 
   it('nudges both ends at once by default, keeping the length', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })]) // 10s long, so 2.5s a press
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([10.1, 20.1])
+    expect(round()).toEqual([12.5, 22.5])
     await button(wrapper, 'Nudge left').trigger('click')
     await button(wrapper, 'Nudge left').trigger('click')
-    expect(round()).toEqual([9.9, 19.9])
+    expect(round()).toEqual([7.5, 17.5])
   })
 
   it('moves only the selected end', async () => {
     const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
     await button(wrapper, 'Move A').trigger('click')
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([10.1, 20])
+    expect(round()).toEqual([12.5, 20])
 
+    // the selection is 7.5s now, so the next press moves by a quarter of that
     await button(wrapper, 'Move B').trigger('click')
     await button(wrapper, 'Nudge right').trigger('click')
-    expect(round()).toEqual([10.1, 20.1])
+    expect(round()).toEqual([12.5, 21.88])
   })
 
   it('halves and doubles the selection from A', async () => {
@@ -544,5 +546,37 @@ describe('AudioPane level monitoring', () => {
     await button(wrapper, 'Louder').trigger('click')
     await flushPromises()
     expect((canvas(wrapper).props('outTrail') as Float32Array)[200]).toBe(0)
+  })
+})
+
+describe('AudioPane loop row', () => {
+  it('keeps the loop controls out of the way until they are asked for', async () => {
+    localStorage.clear()
+    const wrapper = mount(AudioPane, { props: { song: song([track()]), hasPrev: false, hasNext: false, view: 'waveform' } })
+    await flushPromises()
+    expect(button(wrapper, 'Clear A-B')).toBeUndefined()
+
+    await button(wrapper, 'Show loop controls').trigger('click')
+    expect(button(wrapper, 'Clear A-B')).toBeTruthy()
+    expect(button(wrapper, 'Halve selection')).toBeTruthy()
+    expect(localStorage.getItem('audio.loopBar')).toBe('true')
+  })
+})
+
+describe('AudioPane loop nudging', () => {
+  it('moves the loop by a quarter of its own length', async () => {
+    const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })]) // 20s long, so 5s a press
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([15, 35])
+
+    // now 20s still, but after halving it the step halves with it
+    await button(wrapper, 'Halve selection').trigger('click')
+    await button(wrapper, 'Nudge right').trigger('click')
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([17.5, 27.5])
+  })
+
+  it('does not move anything when there is no selection', async () => {
+    const wrapper = await mountPane([track({ loopA: 5 })])
+    expect(button(wrapper, 'Nudge right').attributes('disabled')).toBeDefined()
   })
 })
