@@ -38,7 +38,13 @@ const COLORS = {
   marker: '#4a90d9',
   playhead: '#e53935',
   handle: '#b3a086',
+  grid: 'rgba(255, 255, 255, 0.13)',
+  gridLabel: 'rgba(255, 255, 255, 0.4)',
 }
+
+// the wave is drawn on a linear amplitude scale, so a dB line sits at its amplitude ratio
+const DB_LINES = [-3, -6, -12, -18, -24]
+const amplitudeOf = (db: number) => 10 ** (db / 20)
 
 const FLAG_W = 26
 const FLAG_H = 26
@@ -71,6 +77,34 @@ function peakBetween(from: number, to: number) {
   let peak = 0
   for (let i = first; i <= last; i++) if (props.peaks[i] > peak) peak = props.peaks[i]
   return peak / 255
+}
+
+/**
+ * Horizontal rules at fixed dBFS levels so a peak can be read as a number rather than
+ * eyeballed. Drawn over the wave, faint enough not to fight it: the point is to see
+ * where the wave crosses them.
+ */
+function drawDbGrid(ctx: CanvasRenderingContext2D) {
+  const mid = height.value / 2
+  ctx.lineWidth = 1
+  ctx.font = '9px sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'bottom'
+  for (const db of [0, ...DB_LINES]) {
+    const offset = amplitudeOf(db) * mid
+    const top = Math.round(mid - offset) + 0.5
+    const bottom = Math.round(mid + offset) - 0.5
+    ctx.strokeStyle = COLORS.grid
+    ctx.beginPath()
+    ctx.moveTo(0, top)
+    ctx.lineTo(width.value, top)
+    ctx.moveTo(0, bottom)
+    ctx.lineTo(width.value, bottom)
+    ctx.stroke()
+    ctx.fillStyle = COLORS.gridLabel
+    // 0 dBFS sits on the canvas edge, so its label has to hang below the line
+    ctx.fillText(`${db}`, 2, db === 0 ? top + 10 : top - 1)
+  }
 }
 
 function drawFlag(ctx: CanvasRenderingContext2D, x: number, label: string, active: boolean) {
@@ -169,6 +203,7 @@ function draw() {
   ctx.stroke()
 
   drawWave(ctx, props.overview ? COLORS.waveOverview : COLORS.wave)
+  if (!props.overview) drawDbGrid(ctx)
 
   // A-B repeat region, drawn over the wave so the looped part reads as one block
   const { loopA, loopB } = props
