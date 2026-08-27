@@ -13,7 +13,12 @@
     "deploy:beta": "node scripts/deployBeta.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:worklet": "esbuild src/audio/soundtouchWorklet.js --bundle --format=iife --target=safari14 --outfile=public/soundtouch-worklet.js",
+    "predev": "npm run build:worklet",
+    "predev:test": "npm run build:worklet",
+    "prebuild": "npm run build:worklet",
+    "prebuild:beta": "npm run build:worklet"
   },
   "dependencies": {
     "@vueuse/core": "^10.11.0",
