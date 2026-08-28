@@ -1,3 +1,7 @@
+// registers the service worker and starts watching for new builds; imported here rather
+// than from the prompt so it also happens on routes that render no layout, like login
+import '@/composables/useAppUpdate'
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
@@ -26,7 +30,7 @@ const vuetify = createVuetify({
         colors: {
           background: '#f7f7f7',
           surface: '#FFFFFF',
-          primary: '#38A700',
+          primary: import.meta.env.VITE_PRIMARY_COLOR,
           secondary: '#A72608',
         },
       },

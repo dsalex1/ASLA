@@ -1,0 +1,9 @@
+{
+  "hosting": {
+    "public": "dist-isla",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "**/__test-*"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  },
+  "firestore": { "rules": "rules/firestore.rules" },
+  "storage": { "rules": "rules/storage.rules" }
+}

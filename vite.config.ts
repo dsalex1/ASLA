@@ -25,7 +25,10 @@ export default ({ mode }: { mode: string }) => {
         template: { transformAssetUrls },
       }),
       VitePWA({
-        registerType: 'autoUpdate',
+        // prompt, not autoUpdate: a silent swap gives the user no way to know a new build
+        // landed, and an installed app may never close long enough for one to take over
+        registerType: 'prompt',
+        injectRegister: null, // useAppUpdate registers it, so it can hold the callbacks
         workbox: {
           globPatterns: ['**/*'],
           // both spellings: '**/' does not match files at the root of the output dir
@@ -40,19 +43,13 @@ export default ({ mode }: { mode: string }) => {
           short_name: process.env.VITE_APP_SHORT_NAME,
           display: 'fullscreen',
           description: process.env.VITE_APP_DESCRIPTION,
-          theme_color: '#41B883',
-          icons: [
-            {
-              src: 'logo-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-            },
-            {
-              src: 'logo-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-            },
-          ],
+          theme_color: process.env.VITE_PRIMARY_COLOR,
+          // each environment ships its own icon files, named by VITE_ICON_BASE
+          icons: [192, 512].map((size) => ({
+            src: `${process.env.VITE_ICON_BASE}-${size}.png`,
+            sizes: `${size}x${size}`,
+            type: 'image/png',
+          })),
         },
       }),
     ],
@@ -64,6 +61,13 @@ export default ({ mode }: { mode: string }) => {
     },
     resolve: {
       alias: {
+        // the branded logo is a bundled asset, so the ISLA build swaps the module
+        // rather than the components referencing it; must precede the '@' prefix
+        ...(mode === 'isla'
+          ? {
+              '@/assets/logo.svg': fileURLToPath(new URL('./src/assets/logo-isla.svg', import.meta.url)),
+            }
+          : {}),
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
@@ -73,9 +77,9 @@ export default ({ mode }: { mode: string }) => {
       },
     },
     build: {
-      // docs/ is what GitHub Pages serves for production and is committed; the beta
-      // build goes somewhere ignored so publishing it never touches the prod output
-      outDir: mode === 'beta' ? 'dist-beta' : 'docs',
+      // docs/ is what GitHub Pages serves for production and is committed; the beta and
+      // ISLA builds go somewhere ignored so publishing them never touches the prod output
+      outDir: mode === 'beta' ? 'dist-beta' : mode === 'isla' ? 'dist-isla' : 'docs',
       rollupOptions: {
         output: {
           inlineDynamicImports: true,
