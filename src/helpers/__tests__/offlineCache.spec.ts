@@ -1,6 +1,7 @@
 import {
   cacheKey,
   cacheRef,
+  cacheSizes,
   collectGarbage,
   isCached,
   recache,
@@ -83,6 +84,23 @@ describe('recache', () => {
   it('leaves content nobody is holding offline alone', async () => {
     await recache('sheet_images/a.webp', 'old', 'new', new Blob(['annotated']))
     expect(await isCached('sheet_images/a.webp', 'new')).toBe(false)
+  })
+})
+
+describe('cacheSizes', () => {
+  it('reports the bytes held under each key', async () => {
+    await cacheRef('a.webp', 'one')
+    await cacheRef('b.webp', 'two')
+
+    const sizes = await cacheSizes()
+
+    expect([...sizes.keys()].sort()).toEqual([cacheKey('a.webp', 'one'), cacheKey('b.webp', 'two')].sort())
+    // the stub serves `body of <url>`, so the sizes are the real byte lengths
+    expect(sizes.get(cacheKey('a.webp', 'one'))).toBeGreaterThan(0)
+  })
+
+  it('is empty when nothing is held', async () => {
+    expect((await cacheSizes()).size).toBe(0)
   })
 })
 

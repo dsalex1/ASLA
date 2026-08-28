@@ -4,6 +4,9 @@ import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Setlist } from '@/types'
 import { useCollection } from 'vuefire'
+import { useDisplay } from 'vuetify'
+
+const { mobile } = useDisplay()
 
 const modes = [
   { mode: 'lyrics', label: 'Lyrics', icon: 'fa fa-microphone', color: 'secondary' },
@@ -55,16 +58,26 @@ function formatDuration(duration?: number) {
         <v-card height="100%">
           <div class="d-flex justify-space-between align-center flex-wrap">
             <v-card-title
-              style="width: 0; flex: 1"
+              style="min-width: 0; flex: 1"
               @click="$router.push(`/setlist/${setlist.id}/overview`)"
-              class="cursor-pointer"
+              class="cursor-pointer setlist-title"
             >
               {{ setlist.name || 'Untitled' }}
             </v-card-title>
-            <div class="d-flex align-center">
+            <div class="d-flex align-center flex-shrink-0">
               <OfflineToggle :setlist-id="setlist.id!" :songs="songsOf(setlist)" />
               <RouterLink :to="`/setlist/${setlist.id}/edit`">
-                <v-btn color="primary" variant="text" class="ms-2" prepend-icon="fas fa-edit">edit</v-btn>
+                <v-btn
+                  color="primary"
+                  variant="text"
+                  density="comfortable"
+                  class="ms-1"
+                  title="Edit setlist"
+                  :icon="mobile ? 'fas fa-edit' : undefined"
+                  :prepend-icon="mobile ? undefined : 'fas fa-edit'"
+                >
+                  <template v-if="!mobile">edit</template>
+                </v-btn>
               </RouterLink>
             </div>
           </div>
@@ -122,6 +135,16 @@ function formatDuration(duration?: number) {
 </template>
 
 <style scoped>
+/* v-card-title never wraps, so a long name ellipsed away instead of using the space it has */
+.setlist-title {
+  white-space: normal;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* trim the chrome so the label keeps as many characters as possible before clipping */
 .mode-btn {
   padding-inline: 8px !important;

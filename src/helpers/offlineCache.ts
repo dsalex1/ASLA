@@ -73,4 +73,21 @@ export async function collectGarbage(keep: Set<string>) {
  */
 export const persistStorage = async () => (await navigator.storage?.persist?.()) ?? false
 
-export const storageUsage = async () => (await navigator.storage?.estimate?.())?.usage ?? 0
+export const storageEstimate = async () => await navigator.storage?.estimate?.()
+
+/**
+ * Bytes held under each cache key. Firebase serves a content-length, so this is normally
+ * a header read; only a response without one has to be measured by reading the body.
+ */
+export async function cacheSizes() {
+  const cache = await openCache()
+  const sizes = new Map<string, number>()
+  if (!cache) return sizes
+  for (const request of await cache.keys()) {
+    const response = await cache.match(request)
+    if (!response) continue
+    const declared = Number(response.headers.get('content-length'))
+    sizes.set(new URL(request.url).pathname, declared || (await response.blob()).size)
+  }
+  return sizes
+}

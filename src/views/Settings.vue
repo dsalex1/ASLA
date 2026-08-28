@@ -8,11 +8,13 @@ import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
+import { useOfflinePins } from '@/composables/useOfflinePins'
 import { uploadHashed } from '@/helpers/contentHash'
+import { cacheSizes, storageEstimate } from '@/helpers/offlineCache'
 import { pruneHashes } from '@/helpers/songRefs'
 import { doc, getDocs, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useCollection } from 'vuefire'
 
 const { baseDirectory, chooseNewSheetBaseDirectory } = useSheetBaseDirectory()
@@ -24,6 +26,30 @@ const setlists = useCollection(setlistCollection)
 const setlistFilter = ref<string | null>(null)
 
 const saveSong = useDebounceFn((song: Song) => updateDoc(doc(songCollection, song.id!), song), 500)
+
+const { pins, unpin } = useOfflinePins()
+const sizes = ref(new Map<string, number>())
+const estimate = ref<StorageEstimate>()
+
+async function refreshStorage() {
+  sizes.value = await cacheSizes()
+  estimate.value = await storageEstimate()
+}
+watch(pins, refreshStorage, { immediate: true, deep: true })
+
+const formatSize = (bytes: number) =>
+  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`
+
+const offlineSetlists = computed(() =>
+  Object.entries(pins.value).map(([id, keys]) => ({
+    id,
+    name: setlists.value.find((s) => s.id === id)?.name || 'Untitled',
+    files: keys.length,
+    bytes: keys.reduce((total, key) => total + (sizes.value.get(key) ?? 0), 0),
+  }))
+)
+
+const totalBytes = computed(() => [...sizes.value.values()].reduce((a, b) => a + b, 0))
 
 const filteredSongs = computed(() => {
   if (!setlistFilter.value) return songs.value
@@ -210,6 +236,56 @@ async function migratePdfsToWebp() {
             Force Migration
             <span v-if="isMigrating" class="ml-2">({{ migrationProgress.done }}/{{ migrationProgress.total }})</span>
           </v-btn>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <v-card class="mt-4 mb-4" variant="outlined">
+      <v-card-text>
+        <div class="d-flex justify-space-between align-center flex-wrap ga-2">
+          <div>
+            <h3 class="mb-1">Offline Storage</h3>
+            <div class="text-caption text-grey">
+              {{ formatSize(totalBytes) }} of sheets, images and audio kept on this device<span
+                v-if="estimate?.quota"
+                >, of {{ formatSize(estimate.quota) }} this browser allows</span
+              >.
+            </div>
+          </div>
+          <v-btn variant="text" prepend-icon="fas fa-rotate" @click="refreshStorage">Recalculate</v-btn>
+        </div>
+
+        <v-table v-if="offlineSetlists.length" density="compact" class="mt-3">
+          <thead>
+            <tr>
+              <th>Setlist</th>
+              <th class="text-right">Files</th>
+              <th class="text-right">Size</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in offlineSetlists" :key="entry.id">
+              <td>{{ entry.name }}</td>
+              <td class="text-right">{{ entry.files }}</td>
+              <td class="text-right">{{ formatSize(entry.bytes) }}</td>
+              <td class="text-right">
+                <v-btn
+                  size="small"
+                  variant="text"
+                  color="error"
+                  icon="fas fa-trash"
+                  title="Remove the offline copy"
+                  @click="unpin(entry.id)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+        <div v-else class="text-caption text-grey mt-3">No setlists are kept on this device.</div>
+
+        <div v-if="offlineSetlists.length > 1" class="text-caption text-grey mt-2">
+          A song in more than one setlist is stored once, so these sizes can add up to more than the total.
         </div>
       </v-card-text>
     </v-card>

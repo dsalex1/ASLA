@@ -44,10 +44,12 @@ export function useOfflinePins() {
   const pinnedIds = computed(() => Object.keys(pins.value))
   const isPinned = (setlistId: string) => setlistId in pins.value
 
+  // published last, so anything watching the pins measures the cache after it has settled
+  // rather than while the blobs an unpin is dropping are still there
   async function save(next: Record<string, string[]>) {
-    pins.value = next
     await set(PINS_KEY, next)
     await collectGarbage(new Set(Object.values(next).flat()))
+    pins.value = next
   }
 
   /**
@@ -94,5 +96,5 @@ export function useOfflinePins() {
     await save(rest)
   }
 
-  return { pinnedIds, isPinned, pin, unpin, progress }
+  return { pins, pinnedIds, isPinned, pin, unpin, progress }
 }
