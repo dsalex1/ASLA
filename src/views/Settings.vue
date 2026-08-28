@@ -35,7 +35,7 @@ async function refreshStorage() {
   sizes.value = await cacheSizes()
   estimate.value = await storageEstimate()
 }
-watch(pins, refreshStorage, { immediate: true, deep: true })
+watch(pins, refreshStorage, { immediate: true })
 
 const formatSize = (bytes: number) =>
   bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`

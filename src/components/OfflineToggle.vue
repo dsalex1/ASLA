@@ -18,8 +18,11 @@ const { mobile } = useDisplay()
 const error = ref('')
 
 const pinned = computed(() => isPinned(props.setlistId))
-const busy = computed(() => progress.value?.setlistId === props.setlistId)
-const percent = computed(() => (progress.value?.total ? (progress.value.done / progress.value.total) * 100 : 0))
+const ownProgress = computed(() => progress.value[props.setlistId])
+const busy = computed(() => !!ownProgress.value)
+const percent = computed(() =>
+  ownProgress.value?.total ? (ownProgress.value.done / ownProgress.value.total) * 100 : 0
+)
 // a phone has no room for a word next to the title, which is what gets squeezed out first
 const showText = computed(() => props.labelled && !mobile.value)
 
@@ -110,7 +113,9 @@ const remove = () => run(() => unpin(props.setlistId))
     </v-menu>
 
     <v-progress-linear v-if="busy" :model-value="percent" color="success" height="4" class="mt-1" />
-    <div v-if="busy" class="text-caption text-medium-emphasis">{{ progress?.done }} / {{ progress?.total }} files</div>
+    <div v-if="busy" class="text-caption text-medium-emphasis">
+      {{ ownProgress?.done }} / {{ ownProgress?.total }} files
+    </div>
 
     <div v-if="error" class="text-caption text-error mt-1">{{ error }}</div>
     <div v-if="pinned && needsInstall" class="text-caption text-warning mt-1">

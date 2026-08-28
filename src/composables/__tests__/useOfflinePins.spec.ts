@@ -5,7 +5,8 @@ vi.mock('idb-keyval', () => {
   const store = new Map<string, unknown>()
   return {
     get: vi.fn(async (key: string) => store.get(key)),
-    set: vi.fn(async (key: string, value: unknown) => void store.set(key, value)),
+    // real IndexedDB structured-clones, which is what rejects a vue proxy
+    set: vi.fn(async (key: string, value: unknown) => void store.set(key, structuredClone(value))),
   }
 })
 
@@ -71,6 +72,55 @@ describe('pinning', () => {
 
     expect(await isSongCached(song('a'))).toBe(true)
     expect(await isSongCached(song('b'))).toBe(false)
+  })
+})
+
+describe('several setlists', () => {
+  it('pins a second one after a first, without tripping over the stored value', async () => {
+    const pins = await freshPins()
+    await pins.pin('set-1', [song('a')])
+    await expect(pins.pin('set-2', [song('b')])).resolves.toBeUndefined()
+    expect(pins.pinnedIds.value.sort()).toEqual(['set-1', 'set-2'])
+  })
+
+  it('downloading two at once does not collect the files of the other', async () => {
+    const pins = await freshPins()
+    const { isSongCached } = await import('@/composables/useOfflinePins')
+
+    // set-1 finishes while set-2 is still downloading, so its save runs mid-flight
+    let releaseSlow: () => void = () => {}
+    const slow = new Promise<void>((resolve) => (releaseSlow = resolve))
+    vi.mocked(fetch).mockImplementation(async (url: RequestInfo | URL) => {
+      if (String(url).includes('slow')) await slow
+      return new Response(new TextEncoder().encode(`body of ${url}`))
+    })
+
+    const second = pins.pin('set-2', [song('shared'), song('slow')])
+    await pins.pin('set-1', [song('shared')])
+    releaseSlow()
+    await second
+
+    expect(await isSongCached(song('shared'))).toBe(true)
+    expect(await isSongCached(song('slow'))).toBe(true)
+  })
+
+  it('tracks progress per setlist, so two cards do not share one bar', async () => {
+    const pins = await freshPins()
+    let releaseSlow: () => void = () => {}
+    const slow = new Promise<void>((resolve) => (releaseSlow = resolve))
+    vi.mocked(fetch).mockImplementation(async (url: RequestInfo | URL) => {
+      if (String(url).includes('slow')) await slow
+      return new Response(new TextEncoder().encode(`body of ${url}`))
+    })
+
+    const running = pins.pin('set-slow', [song('slow')])
+    await pins.pin('set-fast', [song('fast')])
+
+    // the finished one is gone from progress while the other is still going
+    expect(Object.keys(pins.progress.value)).toEqual(['set-slow'])
+    releaseSlow()
+    await running
+    expect(pins.progress.value).toEqual({})
   })
 })
 

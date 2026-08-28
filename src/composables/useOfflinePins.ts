@@ -4,7 +4,7 @@ import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { getDocs } from 'firebase/firestore'
 import { get, set } from 'idb-keyval'
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 
 const PINS_KEY = 'offlinePins'
 
@@ -12,8 +12,16 @@ const PINS_KEY = 'offlinePins'
  * setlist id -> the cache keys it put there. Keeping the keys rather than the refs means
  * collecting garbage never needs Firestore: what to keep is the union of these lists.
  */
-const pins = ref<Record<string, string[]>>({})
-const progress = ref<{ setlistId: string; done: number; total: number } | null>(null)
+// shallow: a deep ref turns the stored arrays into proxies, and idb-keyval cannot
+// structured-clone a proxy, so saving a second setlist threw. Every write replaces the
+// whole object anyway, so nothing needs deep reactivity.
+const pins = shallowRef<Record<string, string[]>>({})
+
+/** per setlist, so two cards downloading at once each keep their own bar */
+const progress = ref<Record<string, { done: number; total: number }>>({})
+
+/** what an in-flight pin still intends to store, so a concurrent save cannot collect it */
+const pending = shallowRef<Record<string, string[]>>({})
 
 let loading: Promise<void> | undefined
 const ensureLoaded = () =>
@@ -48,7 +56,9 @@ export function useOfflinePins() {
   // rather than while the blobs an unpin is dropping are still there
   async function save(next: Record<string, string[]>) {
     await set(PINS_KEY, next)
-    await collectGarbage(new Set(Object.values(next).flat()))
+    // a download running in another card has not been recorded yet; collecting its blobs
+    // would leave it pinned with files it thinks it stored already gone
+    await collectGarbage(new Set([...Object.values(next).flat(), ...Object.values(pending.value).flat()]))
     pins.value = next
   }
 
@@ -60,7 +70,8 @@ export function useOfflinePins() {
   async function pin(setlistId: string, songs: Song[]) {
     await ensureLoaded()
     const wanted = songs.flatMap((song) => offlineSongRefs(song).map((ref) => ({ ref, hash: song.hashes?.[ref] })))
-    progress.value = { setlistId, done: 0, total: wanted.length }
+    progress.value = { ...progress.value, [setlistId]: { done: 0, total: wanted.length } }
+    pending.value = { ...pending.value, [setlistId]: wanted.map(({ ref, hash }) => cacheKey(ref, hash)) }
 
     const keys: string[] = []
     const failed: string[] = []
@@ -78,13 +89,17 @@ export function useOfflinePins() {
           console.warn('Could not store', ref, 'offline:', e)
           failed.push(ref)
         }
-        if (progress.value) progress.value = { ...progress.value, done: progress.value.done + 1 }
+        const done = (progress.value[setlistId]?.done ?? 0) + 1
+        progress.value = { ...progress.value, [setlistId]: { done, total: wanted.length } }
       })
       // recorded even when incomplete, so the songs that did arrive stay available and a
       // later refresh only has to pick up the rest
       await save({ ...pins.value, [setlistId]: keys })
     } finally {
-      progress.value = null
+      const { [setlistId]: _doneWith, ...restProgress } = progress.value
+      const { [setlistId]: _noLongerPending, ...restPending } = pending.value
+      progress.value = restProgress
+      pending.value = restPending
     }
 
     if (failed.length) throw new Error(`${failed.length} of ${wanted.length} files could not be downloaded`)
