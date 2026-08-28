@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppUpdatePrompt from '@/components/AppUpdatePrompt.vue'
 import { HOME_ROUTE } from '@/router'
 import { useAuth } from '@/stores/auth'
 import { RouterLink } from 'vue-router'
@@ -25,5 +26,7 @@ const version = `V${__APP_VERSION__}${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` 
     </v-toolbar>
 
     <v-container><slot></slot></v-container>
+
+    <AppUpdatePrompt />
   </v-app>
 </template>

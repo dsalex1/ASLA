@@ -25,7 +25,10 @@ export default ({ mode }: { mode: string }) => {
         template: { transformAssetUrls },
       }),
       VitePWA({
-        registerType: 'autoUpdate',
+        // prompt, not autoUpdate: a silent swap gives the user no way to know a new build
+        // landed, and an installed app may never close long enough for one to take over
+        registerType: 'prompt',
+        injectRegister: null, // useAppUpdate registers it, so it can hold the callbacks
         workbox: {
           globPatterns: ['**/*'],
           // both spellings: '**/' does not match files at the root of the output dir

@@ -1,3 +1,7 @@
+// registers the service worker and starts watching for new builds; imported here rather
+// than from the prompt so it also happens on routes that render no layout, like login
+import '@/composables/useAppUpdate'
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
