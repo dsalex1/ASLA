@@ -67,16 +67,27 @@ function formatDuration(duration?: number) {
             <div class="d-flex align-center flex-shrink-0">
               <OfflineToggle :setlist-id="setlist.id!" :songs="songsOf(setlist)" />
               <RouterLink :to="`/setlist/${setlist.id}/edit`">
+                <!-- VBtn ignores the `icon` prop's glyph when a default slot exists at all,
+                     so the icon-only variant has to be its own element -->
                 <v-btn
+                  v-if="mobile"
+                  icon="fas fa-edit"
                   color="primary"
                   variant="text"
                   density="comfortable"
                   class="ms-1"
                   title="Edit setlist"
-                  :icon="mobile ? 'fas fa-edit' : undefined"
-                  :prepend-icon="mobile ? undefined : 'fas fa-edit'"
+                />
+                <v-btn
+                  v-else
+                  prepend-icon="fas fa-edit"
+                  color="primary"
+                  variant="text"
+                  density="comfortable"
+                  class="ms-1"
+                  title="Edit setlist"
                 >
-                  <template v-if="!mobile">edit</template>
+                  edit
                 </v-btn>
               </RouterLink>
             </div>

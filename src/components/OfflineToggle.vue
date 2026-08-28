@@ -48,26 +48,32 @@ async function run(action: () => Promise<void>) {
   }
 }
 
+const downloadProps = computed(() => ({
+  disabled: !online.value || busy.value,
+  loading: busy.value,
+  color: 'success',
+  variant: 'text' as const,
+  density: 'comfortable' as const,
+  title: online.value ? 'Keep this setlist on the device' : 'Connect to download this setlist',
+}))
+
 const download = () => run(() => pin(props.setlistId, realSongs.value))
 const remove = () => run(() => unpin(props.setlistId))
 </script>
 
 <template>
   <div>
+    <!-- two buttons rather than conditional props: VBtn drops the `icon` prop's glyph
+         whenever a default slot exists at all, even one that renders nothing -->
     <v-btn
-      v-if="!pinned"
-      :disabled="!online || busy"
-      :loading="busy"
-      color="success"
-      variant="text"
-      density="comfortable"
-      :icon="showText ? undefined : 'fas fa-download'"
-      :prepend-icon="showText ? 'fas fa-download' : undefined"
-      :title="online ? 'Keep this setlist on the device' : 'Connect to download this setlist'"
+      v-if="!pinned && showText"
+      v-bind="downloadProps"
+      prepend-icon="fas fa-download"
       @click="download"
     >
-      <template v-if="showText">make available offline</template>
+      make available offline
     </v-btn>
+    <v-btn v-else-if="!pinned" v-bind="downloadProps" icon="fas fa-download" @click="download" />
 
     <!-- once it is on the device the state is the point, so the actions live behind it -->
     <v-menu v-else>
