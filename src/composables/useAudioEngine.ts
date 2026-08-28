@@ -92,8 +92,12 @@ export function useAudioEngine() {
     pause()
   }
 
-  /** knownDuration lets the waveform be scrubbed while the file is still decoding */
-  async function load(url: string, knownDuration = 0) {
+  /**
+   * knownDuration lets the waveform be scrubbed while the file is still decoding.
+   * The bytes are fetched through `read` rather than passed in so that a track switched
+   * away from mid-download loses to the newer load instead of overwriting it.
+   */
+  async function load(read: () => Promise<ArrayBuffer>, knownDuration = 0) {
     const token = ++loadToken
     teardownShifter()
     buffer = null
@@ -102,7 +106,7 @@ export function useAudioEngine() {
     loading.value = true
     error.value = ''
     try {
-      const bytes = await (await fetch(url)).arrayBuffer()
+      const bytes = await read()
       const decoded = await audioContext().decodeAudioData(bytes)
       if (token !== loadToken) return // a newer load won
       buffer = decoded

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
+import OfflineToggle from '@/components/OfflineToggle.vue'
 import SongListItem from '@/components/SongListItem.vue'
+import { isSongCached, useOfflinePins } from '@/composables/useOfflinePins'
 import { getSongInformation } from '@/helpers'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { HOME_ROUTE } from '@/router'
 import { doc } from 'firebase/firestore'
-import { computed } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCollection, useDocument } from 'vuefire'
 
@@ -22,6 +24,16 @@ const songs = computed(() =>
     .map((entry) => (typeof entry === 'string' ? songsCollection.value.find((s) => s.id == entry)! : entry))
     .filter((f) => f)
 )
+
+const { isPinned } = useOfflinePins()
+
+// only the gaps are worth showing, and only once the setlist is meant to be on the device
+const availability = ref<boolean[]>([])
+watchEffect(async () => {
+  const pinned = isPinned(setlistId)
+  const entries = songs.value
+  availability.value = pinned ? await Promise.all(entries.map((s) => 'title' in s || isSongCached(s))) : []
+})
 
 function print() {
   //print with hidden iframe
@@ -94,14 +106,15 @@ function print() {
       <div style="flex: 1">
         {{ setlistData?.name }}
       </div>
-      <div>
+      <div class="d-flex align-center ga-2">
+        <OfflineToggle :setlist-id="setlistId" :songs="songs" labelled />
         <v-btn color="primary" @click="print" class="ms-2">Print</v-btn>
       </div>
     </h2>
     <div class="w-100 d-flex justify-center">
       <v-list density="compact">
         <template v-for="(song, index) in songs">
-          <SongListItem :index="index + 1" :song="song" />
+          <SongListItem :index="index + 1" :song="song" :offline="availability[index]" />
         </template>
       </v-list>
     </div>

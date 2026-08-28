@@ -63,3 +63,29 @@ Object.assign(globalThis, {
   },
 })
 HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never
+
+// happy-dom has no Cache Storage; a Map per named cache is all the offline cache asks for.
+// keys() hands back absolute URLs like the real thing, so pathname round-trips the key.
+const keyOf = (key: string | Request) => (typeof key === 'string' ? key : new URL(key.url).pathname)
+class FakeCache {
+  store = new Map<string, Response>()
+  async match(key: string | Request) {
+    return this.store.get(keyOf(key))?.clone()
+  }
+  async put(key: string | Request, response: Response) {
+    this.store.set(keyOf(key), response)
+  }
+  async delete(key: string | Request) {
+    return this.store.delete(keyOf(key))
+  }
+  async keys() {
+    return [...this.store.keys()].map((key) => new Request(`https://app.test${key}`))
+  }
+}
+const fakeCaches = new Map<string, FakeCache>()
+Object.assign(globalThis, {
+  caches: {
+    open: async (name: string) => fakeCaches.get(name) ?? fakeCaches.set(name, new FakeCache()).get(name)!,
+    delete: async (name: string) => fakeCaches.delete(name),
+  },
+})

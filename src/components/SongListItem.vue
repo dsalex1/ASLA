@@ -7,6 +7,8 @@ defineProps<{
   song: Song | CustomSetlistEntry
   draggable?: boolean
   removeable?: boolean
+  /** false marks a song the pinned offline copy does not cover; undefined shows nothing */
+  offline?: boolean
 }>()
 
 defineEmits<{
@@ -37,6 +39,14 @@ function formatDuration(duration?: number) {
       </div>
     </slot>
     <template v-slot:append>
+      <v-icon
+        v-if="offline === false"
+        icon="fas fa-cloud-arrow-down"
+        size="x-small"
+        color="warning"
+        class="me-2"
+        title="Not available offline"
+      />
       <span v-if="song && 'name' in song && song.duration" class="bg-grey text-white rounded px-1">
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(song.duration) }}

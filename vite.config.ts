@@ -28,12 +28,12 @@ export default ({ mode }: { mode: string }) => {
         registerType: 'autoUpdate',
         workbox: {
           globPatterns: ['**/*'],
-          globIgnores: ['**/__test-*'],
+          // both spellings: '**/' does not match files at the root of the output dir
+          globIgnores: ['**/__test-*', '__test-*'],
           // the app ships as one inlined chunk (see inlineDynamicImports); keep this well above its
           // size or workbox drops it from the precache manifest without failing the build
           maximumFileSizeToCacheInBytes: 20 * 1024 ** 2,
         },
-        includeAssets: ['**/*'],
         manifest: {
           scope: process.env.VITE_BASE_URL,
           name: process.env.VITE_APP_NAME,

@@ -3,7 +3,7 @@ import JogStrip from '@/components/JogStrip.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
-import { audioUrl, loadPeaks } from '@/helpers/audioTracks'
+import { audioBytes, loadPeaks } from '@/helpers/audioTracks'
 import { estimateLag, Reading } from '@/helpers/levelAlign'
 import { PANE_VIEW_ICONS, PANE_VIEWS } from '@/helpers/paneViews'
 import { songCollection } from '@/plugins/firebase'
@@ -78,8 +78,8 @@ watch(
     gainDb.value = current.gainDb ?? 0
     span.value = Math.min(DEFAULT_SPAN, current.duration)
     peaks.value = new Uint8Array()
-    peaks.value = await loadPeaks(current)
-    await engine.load(await audioUrl(current), current.duration)
+    peaks.value = await loadPeaks(current, props.song.hashes)
+    await engine.load(() => audioBytes(current, props.song.hashes), current.duration)
   },
   { immediate: true }
 )

@@ -13,6 +13,8 @@ const props = defineProps<{
   shown: PaneView
   available: Record<PaneView, boolean>
   canAnnotate: boolean
+  /** saving an annotation uploads, which cannot be queued, so offline it is refused up front */
+  annotateOffline?: boolean
   annotLoading?: boolean
   bpm: number
   clicking: boolean
@@ -85,6 +87,8 @@ const editingChords = () => props.annotatable && props.shown == 'chords' && prop
       density="compact"
       icon="fas fa-pen"
       :loading="annotLoading"
+      :disabled="annotateOffline"
+      :title="annotateOffline ? 'Annotating needs a connection' : 'Annotate'"
       @click="$emit('annotate')"
     />
     <v-btn

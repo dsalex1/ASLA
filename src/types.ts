@@ -57,6 +57,8 @@ export type Song = {
   lyrics?: string
   transpose?: number // semitones (-11..11) applied to chords in the lyrics chord view
   folderId?: string | null // null/absent = no folder
+  /** sha-256 (16 hex chars) of the bytes at each storage ref, keyed by ref path; the offline cache key */
+  hashes?: Record<string, string>
   audioTracks?: AudioTrack[]
   selectedAudioTrack?: number // index into audioTracks, remembered between visits
 }

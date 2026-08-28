@@ -5,14 +5,16 @@ import AppLayout from '@/layouts/AppLayout.vue'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 
-import { ref as firebaseRef, getStorage, uploadBytes } from 'firebase/storage'
+import { ref as firebaseRef, getStorage } from 'firebase/storage'
 
 import { folderCollection, setlistCollection, songCollection, withoutFields } from '@/plugins/firebase'
-import { CustomSetlistEntry, Setlist } from '@/types'
+import { CustomSetlistEntry, Setlist, Song } from '@/types'
 import { addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { computed, ref, watch } from 'vue'
 
 import { flatTree } from '@/helpers'
+import { sha, uploadHashed } from '@/helpers/contentHash'
+import { pruneHashes } from '@/helpers/songRefs'
 import { useRoute, useRouter } from 'vue-router'
 import { useCollection, useDocument } from 'vuefire'
 
@@ -42,24 +44,6 @@ const setlist = ref<Omit<Setlist, 'songs'>>({
 
 const currentSongs = ref<(string | CustomSetlistEntry)[]>([])
 
-function arbuf2hex(buffer: ArrayBuffer) {
-  var hexCodes = []
-  var view = new DataView(buffer)
-  for (var i = 0; i < view.byteLength; i += 4) {
-    // Using getUint32 reduces the number of iterations needed (we process 4 bytes each time)
-    var value = view.getUint32(i)
-    // toString(16) will give the hex representation of the number without padding
-    var stringValue = value.toString(16)
-    // We use concatenation and slice for padding
-    var padding = '00000000'
-    var paddedValue = (padding + stringValue).slice(-padding.length)
-    hexCodes.push(paddedValue)
-  }
-
-  // Join all the hex strings into one
-  return hexCodes.join('')
-}
-
 const error = ref('')
 const loading = ref(false)
 async function createSetlist() {
@@ -76,17 +60,13 @@ async function createSetlist() {
         const songDoc = songsDocs.value.find((doc) => doc.filename == filename)!
 
         const fileHandle = flatTree(pdfTree.value).find((f) => f.name == filename)?.handle as FileSystemFileHandle
-        const fileSha = arbuf2hex(
-          await window.crypto.subtle.digest(
-            'SHA-256',
-            new Uint8Array(await (await fileHandle?.getFile())?.arrayBuffer())
-          )
-        )
+        const fileSha = await sha(new Uint8Array(await (await fileHandle?.getFile())?.arrayBuffer()), 64)
         //upload file to firebase storage and save reference in the song doc
         if (fileHandle && (!songDoc.pdfStorageRef || songDoc.pdfStorageSHA != fileSha)) {
           console.log('Uploading file', filename)
           const fileToUpload = await fileHandle.getFile()
-          const file = await uploadFile(fileHandle, fileToUpload)
+          const { fileRef, hash } = await uploadFile(fileHandle, fileToUpload)
+          const hashes: Record<string, string> = { [fileRef.fullPath]: hash }
 
           // Generate WebP Images
           const imageRefs: string[] = []
@@ -96,19 +76,24 @@ async function createSetlist() {
             const storage = getStorage()
             for (let i = 0; i < blobs.length; i++) {
               const imgRef = firebaseRef(storage, `sheet_images/${songDoc.id || fileToUpload.name}_page_${i + 1}.webp`)
-              await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+              hashes[imgRef.fullPath] = await uploadHashed(imgRef, blobs[i], { contentType: 'image/webp' })
               imageRefs.push(imgRef.fullPath)
             }
           } catch (err) {
             console.error('Failed to generate WebP for local file:', err)
           }
 
-          await updateDoc(doc(songCollection, songDoc.id!), {
+          const updated = {
             filename: filename,
-            pdfStorageRef: file.fullPath,
+            pdfStorageRef: fileRef.fullPath,
             pdfStorageSHA: fileSha,
             pdfImageStorageRefs: imageRefs,
-          })
+            hashes: { ...songDoc.hashes, ...hashes },
+          }
+          // drop hashes of pages this pdf no longer has
+          const merged = { ...songDoc, ...updated } as Song
+          pruneHashes(merged)
+          await updateDoc(doc(songCollection, songDoc.id!), { ...updated, hashes: merged.hashes })
         }
       })
     )
@@ -157,12 +142,8 @@ async function uploadFile(fileHandle: FileSystemFileHandle, fileData?: File) {
   const storage = getStorage()
   const fileRef = firebaseRef(storage, fileHandle.name) // folder + '/' +
   const actualFile = fileData || (await fileHandle.getFile())
-  await uploadBytes(fileRef, actualFile, {
-    customMetadata: {
-      originalFileName: actualFile.name,
-    },
-  })
-  return fileRef
+  const hash = await uploadHashed(fileRef, actualFile, { customMetadata: { originalFileName: actualFile.name } })
+  return { fileRef, hash }
 }
 const songs = useCollection(songCollection)
 const folders = useCollection(folderCollection)
