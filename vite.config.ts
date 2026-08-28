@@ -43,7 +43,7 @@ export default ({ mode }: { mode: string }) => {
           short_name: process.env.VITE_APP_SHORT_NAME,
           display: 'fullscreen',
           description: process.env.VITE_APP_DESCRIPTION,
-          theme_color: '#41B883',
+          theme_color: process.env.VITE_PRIMARY_COLOR,
           // each environment ships its own icon files, named by VITE_ICON_BASE
           icons: [192, 512].map((size) => ({
             src: `${process.env.VITE_ICON_BASE}-${size}.png`,

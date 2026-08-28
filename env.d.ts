@@ -14,6 +14,8 @@ interface ImportMetaEnv {
   readonly VITE_APP_SHORT_NAME: string
   readonly VITE_APP_DESCRIPTION: string
   readonly VITE_BASE_URL: string
+  readonly VITE_ICON_BASE: string
+  readonly VITE_PRIMARY_COLOR: string
 }
 
 /** the version from package.json, the one place it is written down */

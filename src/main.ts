@@ -30,7 +30,7 @@ const vuetify = createVuetify({
         colors: {
           background: '#f7f7f7',
           surface: '#FFFFFF',
-          primary: '#38A700',
+          primary: import.meta.env.VITE_PRIMARY_COLOR,
           secondary: '#A72608',
         },
       },
