@@ -8,8 +8,10 @@ import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { HOME_ROUTE } from '@/router'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
+import { uploadHashed } from '@/helpers/contentHash'
+import { pruneHashes } from '@/helpers/songRefs'
 import { doc, getDocs, updateDoc } from 'firebase/firestore'
-import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
+import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, ref } from 'vue'
 import { useCollection } from 'vuefire'
 
@@ -60,13 +62,11 @@ async function saveDrumsFile(song: Song, file: File) {
   const storage = getStorage()
   const fileRef = firebaseRef(storage, `drums/${file.name}`)
   deleteDrumsFile(song) // Remove old file if exists
-  await uploadBytes(fileRef, file, {
-    customMetadata: {
-      originalFileName: file.name,
-    },
-  })
+  const hash = await uploadHashed(fileRef, file, { customMetadata: { originalFileName: file.name } })
   song.drumsPdfStorageRef = fileRef.fullPath
   song.drumsPdfImageStorageRefs = []
+  song.hashes = { ...song.hashes, [fileRef.fullPath]: hash }
+  pruneHashes(song)
   await saveSong(song)
   setCurrentDrumsFile(song)
 }
@@ -135,7 +135,10 @@ async function migratePdfsToWebp() {
           const imageRefs: string[] = []
           for (let i = 0; i < blobs.length; i++) {
             const imgRef = firebaseRef(storage, `sheet_images/${docSnap.id}_page_${i + 1}.webp`)
-            await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+            song.hashes = {
+              ...song.hashes,
+              [imgRef.fullPath]: await uploadHashed(imgRef, blobs[i], { contentType: 'image/webp' }),
+            }
             imageRefs.push(imgRef.fullPath)
           }
           song.pdfImageStorageRefs = imageRefs
@@ -154,7 +157,10 @@ async function migratePdfsToWebp() {
           const imageRefs: string[] = []
           for (let i = 0; i < blobs.length; i++) {
             const imgRef = firebaseRef(storage, `drums_images/${docSnap.id}_page_${i + 1}.webp`)
-            await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+            song.hashes = {
+              ...song.hashes,
+              [imgRef.fullPath]: await uploadHashed(imgRef, blobs[i], { contentType: 'image/webp' }),
+            }
             imageRefs.push(imgRef.fullPath)
           }
           song.drumsPdfImageStorageRefs = imageRefs
@@ -165,6 +171,7 @@ async function migratePdfsToWebp() {
       }
 
       if (updated) {
+        pruneHashes(song)
         await updateDoc(doc(songCollection, docSnap.id), song)
       }
       migrationProgress.value.done++

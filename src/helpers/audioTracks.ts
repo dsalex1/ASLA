@@ -1,6 +1,7 @@
 import { computePeaks, decodeAudio } from '@/helpers/audioPeaks'
+import { uploadHashed } from '@/helpers/contentHash'
 import { AudioTrack, Song } from '@/types'
-import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
+import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 
 /** compressed formats browsers can actually decode — no wav/aiff, they are far too big to stream */
 export const AUDIO_ACCEPT = '.mp3,.m4a,.aac,.ogg,.oga,.opus,.webm,.flac'
@@ -13,7 +14,8 @@ export function isPlayableAudio(file: File) {
   return !!file.type && document.createElement('audio').canPlayType(file.type) !== ''
 }
 
-export async function uploadAudioTrack(song: Song, file: File): Promise<AudioTrack> {
+/** Returns the track plus the content hashes of both uploads, for the song's `hashes` map. */
+export async function uploadAudioTrack(song: Song, file: File) {
   const decoded = await decodeAudio(await file.arrayBuffer())
   const peaks = computePeaks(decoded)
 
@@ -22,19 +24,20 @@ export async function uploadAudioTrack(song: Song, file: File): Promise<AudioTra
   const audioRef = firebaseRef(storage, `${base}_${file.name}`)
   const peaksRef = firebaseRef(storage, `${base}.peaks`)
 
-  await uploadBytes(audioRef, file, { contentType: file.type, customMetadata: { originalFileName: file.name } })
-  await uploadBytes(peaksRef, peaks, { contentType: 'application/octet-stream' })
+  const [audioHash, peaksHash] = await Promise.all([
+    uploadHashed(audioRef, file, { contentType: file.type, customMetadata: { originalFileName: file.name } }),
+    uploadHashed(peaksRef, peaks, { contentType: 'application/octet-stream' }),
+  ])
 
-  return {
+  const track: AudioTrack = {
     name: file.name.replace(/\.[^.]+$/, ''),
     storageRef: audioRef.fullPath,
     peaksRef: peaksRef.fullPath,
     duration: decoded.duration,
     markers: [],
   }
+  return { track, hashes: { [audioRef.fullPath]: audioHash, [peaksRef.fullPath]: peaksHash } }
 }
-
-export const audioTrackRefs = (song: Song) => (song.audioTracks ?? []).flatMap((t) => [t.storageRef, t.peaksRef])
 
 export async function deleteAudioTrack(track: AudioTrack) {
   const storage = getStorage()

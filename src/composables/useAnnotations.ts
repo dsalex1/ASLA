@@ -2,7 +2,10 @@ import { FileContent } from '@/composables/useFileContents'
 import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/helpers/inkAnnotations'
 import { CustomSetlistEntry, Song, ViewMode } from '@/types'
 import { useEventListener } from '@vueuse/core'
-import { ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
+import { uploadHashed } from '@/helpers/contentHash'
+import { songCollection } from '@/plugins/firebase'
+import { doc, updateDoc } from 'firebase/firestore'
+import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, Ref, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 
@@ -118,27 +121,33 @@ export function useAnnotations(opts: {
         a.pages.map((p) => p.strokes)
       )
       const storage = getStorage()
-      await uploadBytes(firebaseRef(storage, a.refPath), newBytes, { contentType: 'application/pdf' })
+      const hashes: Record<string, string> = {
+        [a.refPath]: await uploadHashed(firebaseRef(storage, a.refPath), newBytes, { contentType: 'application/pdf' }),
+      }
 
       // regenerate the cached page images so they include the annotations
       const song = songs.value[a.fileIndex] as Song
       const imgRefs = mode.value == 'drums' ? song.drumsPdfImageStorageRefs : song.pdfImageStorageRefs
+      let freshUrls: string[] | undefined
       if (imgRefs?.length) {
         const { generateWebPImagesFromPdf } = await import('@/helpers/pdfGenerator')
         const blobs = await generateWebPImagesFromPdf(newBytes.slice().buffer)
         await Promise.all(
-          imgRefs.map((r, i) =>
-            blobs[i] ? uploadBytes(firebaseRef(storage, r), blobs[i], { contentType: 'image/webp' }) : undefined
-          )
+          imgRefs.map(async (r, i) => {
+            if (blobs[i]) hashes[r] = await uploadHashed(firebaseRef(storage, r), blobs[i], { contentType: 'image/webp' })
+          })
         )
+        freshUrls = blobs.map((b) => (b ? URL.createObjectURL(b) : ''))
       }
+      // the paths are unchanged but their contents are not, and the offline copies key on the hash
+      if (song.id) await updateDoc(doc(songCollection, song.id), { hashes: { ...song.hashes, ...hashes } })
 
       a.bytes = newBytes
       a.dirty = false
-      // refresh the normal view with the annotated file
+      // refresh the normal view with the annotated file, straight from the bytes just written
       const file = fileContents.value[a.fileIndex]
       if (file?.isPdf) file.dataUrl = URL.createObjectURL(new Blob([newBytes as BlobPart], { type: 'application/pdf' }))
-      else file.urls = file.urls.map((u) => u.split('&_bust=')[0] + '&_bust=' + Date.now())
+      else if (freshUrls) file.urls = freshUrls.map((u, i) => u || file.urls[i])
     } catch (e) {
       console.error('Failed to save annotations:', e)
       alert('Failed to save annotations')

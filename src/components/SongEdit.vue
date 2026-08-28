@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import UltimateGuitarImport, { UgImportData } from '@/components/UltimateGuitarImport.vue'
-import { AUDIO_ACCEPT, audioTrackRefs, deleteAudioTrack, isPlayableAudio, uploadAudioTrack } from '@/helpers/audioTracks'
+import { AUDIO_ACCEPT, deleteAudioTrack, isPlayableAudio, uploadAudioTrack } from '@/helpers/audioTracks'
+import { uploadHashed } from '@/helpers/contentHash'
+import { audioTrackRefs, pruneHashes } from '@/helpers/songRefs'
 import { lyricsHasChords } from '@/helpers/lyrics'
 import { formatDuration } from '@/helpers'
 import { folderCollection, setlistCollection, songCollection } from '@/plugins/firebase'
 import { Song } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { arrayRemove, deleteDoc, doc, getDocs, query, updateDoc, where } from 'firebase/firestore'
-import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage, uploadBytes } from 'firebase/storage'
+import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 import { computed, ref } from 'vue'
 import { useCollection } from 'vuefire'
 
@@ -66,11 +68,8 @@ async function saveDrumsFile(song: Song, file: File) {
   const storage = getStorage()
   const fileRef = firebaseRef(storage, `drums/${file.name}`)
   deleteDrumsFile(song) // Remove old file if exists
-  await uploadBytes(fileRef, file, {
-    customMetadata: {
-      originalFileName: file.name,
-    },
-  })
+  const hashes: Record<string, string> = {}
+  hashes[fileRef.fullPath] = await uploadHashed(fileRef, file, { customMetadata: { originalFileName: file.name } })
   song.drumsPdfStorageRef = fileRef.fullPath
 
   try {
@@ -79,7 +78,7 @@ async function saveDrumsFile(song: Song, file: File) {
     const imageRefs: string[] = []
     for (let i = 0; i < blobs.length; i++) {
       const imgRef = firebaseRef(storage, `drums_images/${song.id || file.name}_page_${i + 1}.webp`)
-      await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+      hashes[imgRef.fullPath] = await uploadHashed(imgRef, blobs[i], { contentType: 'image/webp' })
       imageRefs.push(imgRef.fullPath)
     }
     song.drumsPdfImageStorageRefs = imageRefs
@@ -87,6 +86,8 @@ async function saveDrumsFile(song: Song, file: File) {
     console.error('Failed to generate drums WebP images:', error)
   }
 
+  song.hashes = { ...song.hashes, ...hashes }
+  pruneHashes(song)
   await saveSong(song)
   setCurrentDrumsFile(song)
 }
@@ -136,11 +137,8 @@ async function saveSheetFile(song: Song, file: File) {
   if (song.pdfStorageRef) {
     await deleteSheetFile(song)
   }
-  await uploadBytes(fileRef, file, {
-    customMetadata: {
-      originalFileName: file.name,
-    },
-  })
+  const hashes: Record<string, string> = {}
+  hashes[fileRef.fullPath] = await uploadHashed(fileRef, file, { customMetadata: { originalFileName: file.name } })
   song.pdfStorageRef = fileRef.fullPath
 
   try {
@@ -149,7 +147,7 @@ async function saveSheetFile(song: Song, file: File) {
     const imageRefs: string[] = []
     for (let i = 0; i < blobs.length; i++) {
       const imgRef = firebaseRef(storage, `sheet_images/${song.id || file.name}_page_${i + 1}.webp`)
-      await uploadBytes(imgRef, blobs[i], { contentType: 'image/webp' })
+      hashes[imgRef.fullPath] = await uploadHashed(imgRef, blobs[i], { contentType: 'image/webp' })
       imageRefs.push(imgRef.fullPath)
     }
     song.pdfImageStorageRefs = imageRefs
@@ -157,6 +155,8 @@ async function saveSheetFile(song: Song, file: File) {
     console.error('Failed to generate sheet WebP images:', error)
   }
 
+  song.hashes = { ...song.hashes, ...hashes }
+  pruneHashes(song)
   await saveSong(song)
   setCurrentSheetFile(song)
 }
@@ -195,7 +195,9 @@ async function addAudioTrack(song: Song, file?: File) {
   if (!isPlayableAudio(file)) return alert(`${file.name} is not a playable compressed audio format (${AUDIO_ACCEPT}).`)
   audioUploading.value = true
   try {
-    song.audioTracks = [...(song.audioTracks ?? []), await uploadAudioTrack(song, file)]
+    const { track, hashes } = await uploadAudioTrack(song, file)
+    song.audioTracks = [...(song.audioTracks ?? []), track]
+    song.hashes = { ...song.hashes, ...hashes }
     await saveSong(song)
   } catch (e) {
     console.error('Failed to add audio track:', e)
