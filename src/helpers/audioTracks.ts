@@ -1,7 +1,8 @@
 import { computePeaks, decodeAudio } from '@/helpers/audioPeaks'
 import { uploadHashed } from '@/helpers/contentHash'
+import { resolveBytes } from '@/helpers/offlineCache'
 import { AudioTrack, Song } from '@/types'
-import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
+import { deleteObject, ref as firebaseRef, getStorage } from 'firebase/storage'
 
 /** compressed formats browsers can actually decode — no wav/aiff, they are far too big to stream */
 export const AUDIO_ACCEPT = '.mp3,.m4a,.aac,.ogg,.oga,.opus,.webm,.flac'
@@ -48,11 +49,9 @@ export async function deleteAudioTrack(track: AudioTrack) {
   )
 }
 
-const download = (path: string) => getDownloadURL(firebaseRef(getStorage(), path))
+/** The encoded track, straight to decodeAudioData — never an object URL, these are the big ones. */
+export const audioBytes = (track: AudioTrack, hashes?: Song['hashes']) =>
+  resolveBytes(track.storageRef, hashes?.[track.storageRef])
 
-export const audioUrl = (track: AudioTrack) => download(track.storageRef)
-
-export async function loadPeaks(track: AudioTrack) {
-  const response = await fetch(await download(track.peaksRef))
-  return new Uint8Array(await response.arrayBuffer())
-}
+export const loadPeaks = async (track: AudioTrack, hashes?: Song['hashes']) =>
+  new Uint8Array(await resolveBytes(track.peaksRef, hashes?.[track.peaksRef]))

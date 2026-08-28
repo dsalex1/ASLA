@@ -1,8 +1,8 @@
 import { flatTree, mapTree } from '@/helpers'
+import { resolveRef } from '@/helpers/offlineCache'
 import { useSheetBaseDirectory } from '@/plugins/sheetBaseDirectory'
 import { CustomSetlistEntry, Song, ViewMode } from '@/types'
-import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
-import { computed, Ref, ref, watch } from 'vue'
+import { computed, nextTick, onScopeDispose, Ref, ref, watch } from 'vue'
 
 export type FileContent = {
   urls: string[]
@@ -12,7 +12,11 @@ export type FileContent = {
   pageCount?: number
 }
 
-const downloadAll = (refs: string[]) => Promise.all(refs.map((r) => getDownloadURL(firebaseRef(getStorage(), r))))
+/** Offline copies resolve to object URLs, which stay alive until they are released. */
+function revoke(contents: FileContent[]) {
+  for (const file of contents)
+    for (const url of [file.dataUrl, ...file.urls]) if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+}
 
 /**
  * Resolves each song to a renderable sheet (cached page images, the pdf itself, or a
@@ -28,15 +32,17 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
 
   async function resolveFileUrl(song: Song | CustomSetlistEntry) {
     if (!('pdfStorageRef' in song)) return ''
+    const resolve = (ref: string) => resolveRef(ref, song.hashes?.[ref])
+    const resolveAll = (refs: string[]) => Promise.all(refs.map(resolve))
 
     if (sheetMode.value == 'chords') {
-      if (song.pdfImageStorageRefs?.length) return await downloadAll(song.pdfImageStorageRefs)
-      if (song.pdfStorageRef) return await getDownloadURL(firebaseRef(getStorage(), song.pdfStorageRef))
+      if (song.pdfImageStorageRefs?.length) return await resolveAll(song.pdfImageStorageRefs)
+      if (song.pdfStorageRef) return await resolve(song.pdfStorageRef)
     }
 
     if (sheetMode.value == 'drums') {
-      if (song.drumsPdfImageStorageRefs?.length) return await downloadAll(song.drumsPdfImageStorageRefs)
-      if (song.drumsPdfStorageRef) return await getDownloadURL(firebaseRef(getStorage(), song.drumsPdfStorageRef))
+      if (song.drumsPdfImageStorageRefs?.length) return await resolveAll(song.drumsPdfImageStorageRefs)
+      if (song.drumsPdfStorageRef) return await resolve(song.drumsPdfStorageRef)
     }
 
     if (song.filename) {
@@ -71,6 +77,7 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
     [songs, sheetMode],
     async () => {
       const showsSheets = sheetMode.value != 'lyrics' && sheetMode.value != 'audio'
+      const stale = fileContents.value
       fileContents.value = await Promise.all(
         songs.value.map(async (song) => {
           const resolved = showsSheets ? await resolveFileUrl(song) : ''
@@ -88,9 +95,13 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
           }
         })
       )
+      // the rendered page still points at the old urls until it has re-rendered
+      nextTick(() => revoke(stale))
     },
     { immediate: true, deep: true }
   )
+
+  onScopeDispose(() => revoke(fileContents.value))
 
   return { fileContents, sheetSources }
 }

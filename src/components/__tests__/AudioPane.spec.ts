@@ -39,7 +39,7 @@ const engine = {
 vi.mock('@/composables/useAudioEngine', () => ({ useAudioEngine: () => engine }))
 vi.mock('@/helpers/audioTracks', () => ({
   loadPeaks: vi.fn(() => Promise.resolve(new Uint8Array(10000))),
-  audioUrl: vi.fn(() => Promise.resolve('blob:track')),
+  audioBytes: vi.fn(() => Promise.resolve(new ArrayBuffer(8))),
 }))
 
 const track = (over: Partial<AudioTrack> = {}): AudioTrack => ({
@@ -97,11 +97,13 @@ beforeEach(() => {
 
 describe('AudioPane track loading', () => {
   it('loads peaks and audio, and restores the saved settings', async () => {
-    const { loadPeaks, audioUrl } = await import('@/helpers/audioTracks')
+    const { loadPeaks, audioBytes } = await import('@/helpers/audioTracks')
     await mountPane([track({ markers: [5, 10], loopA: 5, loopB: 10, tempo: 0.8, pitch: -2 })])
     expect(loadPeaks).toHaveBeenCalledOnce()
-    expect(audioUrl).toHaveBeenCalledOnce()
-    expect(engine.load).toHaveBeenCalledWith('blob:track', 100) // duration up front so the waveform is scrubbable while decoding
+    // duration up front so the waveform is scrubbable while decoding
+    expect(engine.load).toHaveBeenCalledWith(expect.any(Function), 100)
+    await (engine.load as unknown as { mock: { calls: [() => Promise<ArrayBuffer>][] } }).mock.calls[0][0]()
+    expect(audioBytes).toHaveBeenCalledOnce()
     expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, 5, 10])
   })
 

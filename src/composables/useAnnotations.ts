@@ -3,9 +3,10 @@ import { PageAnnotations, readAnnotations, StrokeOp, writeAnnotations } from '@/
 import { CustomSetlistEntry, Song, ViewMode } from '@/types'
 import { useEventListener } from '@vueuse/core'
 import { uploadHashed } from '@/helpers/contentHash'
+import { recache, resolveBytes } from '@/helpers/offlineCache'
 import { songCollection } from '@/plugins/firebase'
 import { doc, updateDoc } from 'firebase/firestore'
-import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
+import { ref as firebaseRef, getStorage } from 'firebase/storage'
 import { computed, Ref, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 
@@ -45,8 +46,8 @@ export function useAnnotations(opts: {
     if (loading.value || annot.value) return // guard double-clicks: a second run would discard drawn strokes
     loading.value = true
     try {
-      const url = await getDownloadURL(firebaseRef(getStorage(), refPath.value))
-      const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
+      const source = songs.value[fileIndex.value] as Song
+      const bytes = new Uint8Array(await resolveBytes(refPath.value, source.hashes?.[refPath.value]))
       const pages = await readAnnotations(bytes)
       fileContents.value[fileIndex.value].pageCount = pages.length
       if (page.value > pages.length) page.value = 1
@@ -121,12 +122,14 @@ export function useAnnotations(opts: {
         a.pages.map((p) => p.strokes)
       )
       const storage = getStorage()
+      const song = songs.value[a.fileIndex] as Song
+      const pdfBlob = new Blob([newBytes as BlobPart], { type: 'application/pdf' })
       const hashes: Record<string, string> = {
         [a.refPath]: await uploadHashed(firebaseRef(storage, a.refPath), newBytes, { contentType: 'application/pdf' }),
       }
+      await recache(a.refPath, song.hashes?.[a.refPath], hashes[a.refPath], pdfBlob)
 
       // regenerate the cached page images so they include the annotations
-      const song = songs.value[a.fileIndex] as Song
       const imgRefs = mode.value == 'drums' ? song.drumsPdfImageStorageRefs : song.pdfImageStorageRefs
       let freshUrls: string[] | undefined
       if (imgRefs?.length) {
@@ -134,7 +137,9 @@ export function useAnnotations(opts: {
         const blobs = await generateWebPImagesFromPdf(newBytes.slice().buffer)
         await Promise.all(
           imgRefs.map(async (r, i) => {
-            if (blobs[i]) hashes[r] = await uploadHashed(firebaseRef(storage, r), blobs[i], { contentType: 'image/webp' })
+            if (!blobs[i]) return
+            hashes[r] = await uploadHashed(firebaseRef(storage, r), blobs[i], { contentType: 'image/webp' })
+            await recache(r, song.hashes?.[r], hashes[r], blobs[i])
           })
         )
         freshUrls = blobs.map((b) => (b ? URL.createObjectURL(b) : ''))
@@ -146,7 +151,7 @@ export function useAnnotations(opts: {
       a.dirty = false
       // refresh the normal view with the annotated file, straight from the bytes just written
       const file = fileContents.value[a.fileIndex]
-      if (file?.isPdf) file.dataUrl = URL.createObjectURL(new Blob([newBytes as BlobPart], { type: 'application/pdf' }))
+      if (file?.isPdf) file.dataUrl = URL.createObjectURL(pdfBlob)
       else if (freshUrls) file.urls = freshUrls.map((u, i) => u || file.urls[i])
     } catch (e) {
       console.error('Failed to save annotations:', e)
