@@ -8,6 +8,7 @@ import {
   Firestore,
   initializeFirestore,
   persistentLocalCache,
+  persistentMultipleTabManager,
 } from 'firebase/firestore'
 import { connectStorageEmulator, getStorage } from 'firebase/storage'
 import { getPerformance } from 'firebase/performance'
@@ -32,12 +33,16 @@ export const auth = getAuth(app)
 
 const useEmulators = env.VITE_FIREBASE_EMULATORS === 'true'
 
-// unlimited because the default 40MB cache evicts, and a pinned setlist whose song docs
-// were evicted has lyrics and markers missing with no way to fetch them offline
-export const db = initializeFirestore(
-  app,
-  useEmulators ? {} : { localCache: persistentLocalCache({ cacheSizeBytes: CACHE_SIZE_UNLIMITED }) }
-)
+// Unlimited because the default 40MB cache evicts, and a pinned setlist whose song docs
+// were evicted has lyrics and markers missing with no way to fetch them offline. The
+// emulators get the same cache as production, or offline behaviour cannot be tested at
+// all locally; the multi-tab manager is what keeps a second tab from failing to open it.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+    tabManager: persistentMultipleTabManager(),
+  }),
+})
 
 if (useEmulators) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })

@@ -4,6 +4,7 @@ import { initializeApp } from 'firebase/app'
 import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from 'firebase/auth'
 import { connectFirestoreEmulator, doc, getFirestore, setDoc } from 'firebase/firestore'
 import { connectStorageEmulator, getStorage, ref, uploadBytes } from 'firebase/storage'
+import { createHash } from 'node:crypto'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 
 const app = initializeApp({
@@ -86,14 +87,21 @@ try {
   console.log('user user@user.com already exists')
 }
 
+/** matches src/helpers/contentHash.ts, so seeded songs key the offline cache like uploaded ones */
+const hashes = {}
+async function upload(path, bytes, contentType) {
+  await uploadBytes(ref(storage, path), bytes, { contentType })
+  hashes[path] = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+}
+
 const sheetPdf = await makePdf('Test Song Sheet', 3)
 const drumsPdf = await makePdf('Test Song Drums', 2)
-await uploadBytes(ref(storage, 'test-song.pdf'), sheetPdf, { contentType: 'application/pdf' })
-await uploadBytes(ref(storage, 'drums/test-song-drums.pdf'), drumsPdf, { contentType: 'application/pdf' })
+await upload('test-song.pdf', sheetPdf, 'application/pdf')
+await upload('drums/test-song-drums.pdf', drumsPdf, 'application/pdf')
 
 const wav = makeWav()
-await uploadBytes(ref(storage, 'audio/test-song.wav'), wav.bytes, { contentType: 'audio/wav' })
-await uploadBytes(ref(storage, 'audio/test-song.peaks'), makePeaks(wav), { contentType: 'application/octet-stream' })
+await upload('audio/test-song.wav', wav.bytes, 'audio/wav')
+await upload('audio/test-song.peaks', makePeaks(wav), 'application/octet-stream')
 
 await setDoc(doc(db, 'songs', 'test-song'), {
   filename: 'test-song.pdf',
@@ -112,6 +120,7 @@ await setDoc(doc(db, 'songs', 'test-song'), {
       markers: [12, 30],
     },
   ],
+  hashes,
 })
 
 // No lyrics: exercises the "Import from Ultimate Guitar" button in SongEdit.
