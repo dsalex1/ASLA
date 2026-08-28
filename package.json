@@ -10,7 +10,9 @@
     "emulators": "firebase emulators:start --project demo-asla",
     "build": "vue-tsc -b && vite build",
     "build:beta": "vue-tsc -b && vite build --mode beta",
+    "build:isla": "vue-tsc -b && vite build --mode isla",
     "deploy:beta": "node scripts/deployBeta.mjs",
+    "deploy:isla": "npm run build:isla && firebase deploy --config firebase.isla.json --project ibis-setlist-app",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -18,7 +20,8 @@
     "predev": "npm run build:worklet",
     "predev:test": "npm run build:worklet",
     "prebuild": "npm run build:worklet",
-    "prebuild:beta": "npm run build:worklet"
+    "prebuild:beta": "npm run build:worklet",
+    "prebuild:isla": "npm run build:worklet"
   },
   "dependencies": {
     "@vueuse/core": "^10.11.0",
