@@ -152,31 +152,21 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
 const loopBarOpen = useLocalStorage('audio.loopBar', false)
 watch(loopBarOpen, (open) => (engine.loopEnabled.value = open), { immediate: true })
 
-/** which end the arrows move: 'a', 'b', or both at once keeping the length */
-const loopTarget = ref<'a' | 'b' | 'ab'>('ab')
-
 const hasLoop = computed(() => loopA.value != null && loopB.value != null)
 
-const NUDGE = 0.025 // seconds a single arrow press moves a loop point
-
-function nudgeLoop(direction: -1 | 1) {
-  const delta = direction * NUDGE
-  if (loopTarget.value != 'b' && loopA.value != null) loopA.value = Math.max(0, loopA.value + delta)
-  if (loopTarget.value != 'a' && loopB.value != null) loopB.value = Math.min(trackDuration.value, loopB.value + delta)
-  keepLoopOrdered()
+/** step the whole selection one selection-length forward or back, so you can walk the track */
+function stepLoop(direction: -1 | 1) {
+  if (loopA.value == null || loopB.value == null) return
+  const length = loopB.value - loopA.value
+  const start = Math.max(0, Math.min(loopA.value + direction * length, trackDuration.value - length))
+  loopA.value = start
+  loopB.value = start + length
 }
 
 /** halve or double the selection, keeping A where it is */
 function scaleLoop(factor: number) {
   if (loopA.value == null || loopB.value == null) return
   loopB.value = Math.min(trackDuration.value, loopA.value + (loopB.value - loopA.value) * factor)
-  keepLoopOrdered()
-}
-
-// a nudge or a scale must never leave B at or before A
-function keepLoopOrdered() {
-  if (loopA.value != null && loopB.value != null && loopB.value <= loopA.value)
-    loopA.value = Math.max(0, loopB.value - NUDGE)
 }
 
 function clearLoop() {
@@ -455,18 +445,8 @@ defineExpose({ position: currentTime })
       </div>
 
       <div class="group">
-          <button
-            v-for="t in (['a', 'ab', 'b'] as const)"
-            :key="t"
-            class="tbtn"
-            :class="{ 'tbtn--on': loopTarget == t }"
-            :aria-label="{ a: 'Move A', ab: 'Move A and B', b: 'Move B' }[t]"
-            @click="loopTarget = t"
-          >
-            {{ { a: 'A', ab: '⇄', b: 'B' }[t] }}
-          </button>
-          <button class="tbtn" aria-label="Nudge left" :disabled="!hasLoop" @click="nudgeLoop(-1)"><i class="fas fa-arrow-left" /></button>
-          <button class="tbtn" aria-label="Nudge right" :disabled="!hasLoop" @click="nudgeLoop(1)"><i class="fas fa-arrow-right" /></button>
+          <button class="tbtn" aria-label="Step back one selection" :disabled="!hasLoop" @click="stepLoop(-1)"><i class="fas fa-arrow-left" /></button>
+          <button class="tbtn" aria-label="Step forward one selection" :disabled="!hasLoop" @click="stepLoop(1)"><i class="fas fa-arrow-right" /></button>
           <button class="tbtn" aria-label="Halve selection" :disabled="!hasLoop" @click="scaleLoop(0.5)">½</button>
           <button class="tbtn" aria-label="Double selection" :disabled="!hasLoop" @click="scaleLoop(2)">x2</button>
       </div>

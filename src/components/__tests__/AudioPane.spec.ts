@@ -412,24 +412,13 @@ describe('AudioPane A-B move', () => {
     expect(engine.loopB.value).toBeCloseTo(b, 5)
   }
 
-  it('nudges both ends at once by default, keeping the length', async () => {
+  it('steps the selection forward and back by its own length', async () => {
     const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
-    await button(wrapper, 'Nudge right').trigger('click')
-    expectLoop(10.025, 20.025)
-    await button(wrapper, 'Nudge left').trigger('click')
-    await button(wrapper, 'Nudge left').trigger('click')
-    expectLoop(9.975, 19.975)
-  })
-
-  it('moves only the selected end', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
-    await button(wrapper, 'Move A').trigger('click')
-    await button(wrapper, 'Nudge right').trigger('click')
-    expectLoop(10.025, 20)
-
-    await button(wrapper, 'Move B').trigger('click')
-    await button(wrapper, 'Nudge right').trigger('click')
-    expectLoop(10.025, 20.025)
+    await button(wrapper, 'Step forward one selection').trigger('click')
+    expectLoop(20, 30)
+    await button(wrapper, 'Step back one selection').trigger('click')
+    await button(wrapper, 'Step back one selection').trigger('click')
+    expectLoop(0, 10)
   })
 
   it('halves and doubles the selection from A', async () => {
@@ -440,20 +429,20 @@ describe('AudioPane A-B move', () => {
     expect(loop()).toEqual([10, 20])
   })
 
-  it('clamps the selection to the track and never lets B pass A', async () => {
+  it('clamps the selection to the track, keeping its length', async () => {
     const wrapper = await mountPane([track({ loopA: 10, loopB: 90, duration: 100 })])
     await button(wrapper, 'Double selection').trigger('click')
     expect(loop()).toEqual([10, 100])
 
-    await button(wrapper, 'Move B').trigger('click')
-    engine.loopB.value = 10.05
-    await button(wrapper, 'Nudge left').trigger('click')
-    expect(engine.loopB.value).toBeGreaterThan(engine.loopA.value!)
+    // [10, 55] is 45 long, so stepping forward hits the end of the track and stops there
+    await button(wrapper, 'Halve selection').trigger('click')
+    await button(wrapper, 'Step forward one selection').trigger('click')
+    expect(loop()).toEqual([55, 100])
   })
 
   it('disables the move buttons until both ends are set', async () => {
     const wrapper = await mountPane([track()])
-    for (const label of ['Nudge left', 'Nudge right', 'Halve selection', 'Double selection'])
+    for (const label of ['Step back one selection', 'Step forward one selection', 'Halve selection', 'Double selection'])
       expect(button(wrapper, label).attributes('disabled')).toBeDefined()
   })
 })
@@ -598,21 +587,21 @@ describe('AudioPane loop row', () => {
   })
 })
 
-describe('AudioPane loop nudging', () => {
-  it('moves in fixed 25 ms steps, whatever the loop is', async () => {
+describe('AudioPane loop stepping', () => {
+  it('steps by the current selection length, so halving halves the step', async () => {
     const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })])
-    await button(wrapper, 'Nudge right').trigger('click')
-    expect(engine.loopB.value).toBeCloseTo(30.025, 5)
+    await button(wrapper, 'Step forward one selection').trigger('click')
+    expect(engine.loopA.value).toBeCloseTo(30, 5)
+    expect(engine.loopB.value).toBeCloseTo(50, 5)
 
-    // a much shorter selection steps by exactly the same amount
     await button(wrapper, 'Halve selection').trigger('click')
-    await button(wrapper, 'Nudge right').trigger('click')
-    expect(engine.loopA.value).toBeCloseTo(10.05, 5)
-    expect(engine.loopB.value).toBeCloseTo(20.05, 5)
+    await button(wrapper, 'Step forward one selection').trigger('click')
+    expect(engine.loopA.value).toBeCloseTo(40, 5)
+    expect(engine.loopB.value).toBeCloseTo(50, 5)
   })
 
   it('does not move anything when there is no selection', async () => {
     const wrapper = await mountPane([track({ loopA: 5 })])
-    expect(button(wrapper, 'Nudge right').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, 'Step forward one selection').attributes('disabled')).toBeDefined()
   })
 })
