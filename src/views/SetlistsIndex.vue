@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import OfflineToggle from '@/components/OfflineToggle.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
+import { Setlist } from '@/types'
 import { useCollection } from 'vuefire'
 
 const modes = [
@@ -12,6 +14,9 @@ const modes = [
 
 const setlists = useCollection(setlistCollection)
 const songs = useCollection(songCollection)
+
+const songsOf = (setlist: Setlist) =>
+  setlist.songs.map((s) => (typeof s === 'string' ? songs.value.find((x) => x.id == s) : s)).filter((s) => !!s)
 
 function formatSongName(song: string) {
   return song.replace(/.pdf$/, '').length > 16
@@ -56,7 +61,8 @@ function formatDuration(duration?: number) {
             >
               {{ setlist.name || 'Untitled' }}
             </v-card-title>
-            <div>
+            <div class="d-flex align-center">
+              <OfflineToggle :setlist-id="setlist.id!" :songs="songsOf(setlist)" />
               <RouterLink :to="`/setlist/${setlist.id}/edit`">
                 <v-btn color="primary" variant="text" class="ms-2" prepend-icon="fas fa-edit">edit</v-btn>
               </RouterLink>

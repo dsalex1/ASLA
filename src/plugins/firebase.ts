@@ -4,6 +4,7 @@ import {
   collection,
   CollectionReference,
   connectFirestoreEmulator,
+  CACHE_SIZE_UNLIMITED,
   Firestore,
   initializeFirestore,
   persistentLocalCache,
@@ -31,7 +32,12 @@ export const auth = getAuth(app)
 
 const useEmulators = env.VITE_FIREBASE_EMULATORS === 'true'
 
-export const db = initializeFirestore(app, useEmulators ? {} : { localCache: persistentLocalCache({}) })
+// unlimited because the default 40MB cache evicts, and a pinned setlist whose song docs
+// were evicted has lyrics and markers missing with no way to fetch them offline
+export const db = initializeFirestore(
+  app,
+  useEmulators ? {} : { localCache: persistentLocalCache({ cacheSizeBytes: CACHE_SIZE_UNLIMITED }) }
+)
 
 if (useEmulators) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })

@@ -8,6 +8,7 @@ import SheetPane from '@/components/SheetPane.vue'
 import SongEdit from '@/components/SongEdit.vue'
 import SongInfoBar from '@/components/SongInfoBar.vue'
 import { useAnnotations } from '@/composables/useAnnotations'
+import { useOnline } from '@vueuse/core'
 import { useFileContents } from '@/composables/useFileContents'
 import { createMetronome } from '@/helpers/metronome'
 import { PANE_VIEW_MISSING, sheetModeOfView, shownView, viewOfMode } from '@/helpers/paneViews'
@@ -69,6 +70,8 @@ watch(
   },
   { immediate: true }
 )
+
+const online = useOnline()
 
 const annotations = useAnnotations({
   songs: toRef(props, 'songs'),
@@ -219,6 +222,7 @@ const noSheetHint = computed(() =>
       :shown="shown"
       :available="available"
       :canAnnotate="!!annotations.refPath.value"
+      :annotateOffline="!online"
       :annotLoading="annotations.loading.value"
       :bpm="currentBpm"
       :clicking="clicking"

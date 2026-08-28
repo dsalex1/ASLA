@@ -44,6 +44,8 @@ export function useAnnotations(opts: {
 
   async function start() {
     if (loading.value || annot.value) return // guard double-clicks: a second run would discard drawn strokes
+    // saving uploads a new pdf, and an upload cannot be queued for later
+    if (!navigator.onLine) return alert('Annotating needs a connection')
     loading.value = true
     try {
       const source = songs.value[fileIndex.value] as Song
