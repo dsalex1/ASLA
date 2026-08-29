@@ -1,3 +1,4 @@
+import { computePeaks } from '@/helpers/audioPeaks'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 /** what a worklet is handed per call, and so how far its output trails the playhead */
@@ -5,6 +6,9 @@ const RENDER_QUANTUM = 128
 
 // bundled separately, since a worklet cannot resolve soundtouchjs itself - see build:worklet
 const WORKLET_URL = `${import.meta.env.BASE_URL}soundtouch-worklet.js`
+
+/** One stem to load with the track: its bytes, and the level it was left at. */
+export type StemSource = { name: string; volume: number; read: () => Promise<ArrayBuffer> }
 
 /**
  * Streaming is not an option here: independent tempo and pitch need the whole
@@ -25,6 +29,19 @@ export function useAudioEngine() {
   /** A-B only repeats while the loop controls are on screen */
   const loopEnabled = ref(true)
 
+  // --- stems ---------------------------------------------------------------------------
+  // A split track is handed to the worklet as every stem plus a gain per stem, and the
+  // blend is summed on the audio thread: moving a fader is one message, not a re-mix, and
+  // the single shifter still does tempo and pitch on the result. The waveform is the same
+  // blend, approximated from per-stem peaks so it tracks the faders.
+  const stemNames = ref<string[]>([])
+  const stemVolume = ref<Record<string, number>>({})
+  /** peaks of the current blend, for the waveform; empty while the track is unsplit */
+  const stemPeaks = ref<Uint8Array>(new Uint8Array())
+  const stemBuffers = new Map<string, AudioBuffer>() // spent once handed to the worklet
+  const stemPeaksPer = new Map<string, Uint8Array>() // kept, so the waveform can re-weight
+  const stemPrevVolume = new Map<string, number>() // what a stem returns to when un-muted
+
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
   let shifter: AudioWorkletNode | null = null
@@ -36,6 +53,8 @@ export function useAudioEngine() {
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
+
+  const asStereo = (b: AudioBuffer) => [b.getChannelData(0), b.getChannelData(b.numberOfChannels > 1 ? 1 : 0)]
 
   const amplitude = (db: number) => 10 ** (db / 20)
 
@@ -97,9 +116,10 @@ export function useAudioEngine() {
    * The bytes are fetched through `read` rather than passed in so that a track switched
    * away from mid-download loses to the newer load instead of overwriting it.
    */
-  async function load(read: () => Promise<ArrayBuffer>, knownDuration = 0) {
+  async function load(read: () => Promise<ArrayBuffer>, knownDuration = 0, stems: StemSource[] = []) {
     const token = ++loadToken
     teardownShifter()
+    clearStems()
     buffer = null
     duration.value = knownDuration
     currentTime.value = 0
@@ -118,6 +138,93 @@ export function useAudioEngine() {
     } finally {
       if (token === loadToken) loading.value = false
     }
+    // the mix plays while the stems arrive, and is dropped once they do: the stems plus
+    // the residual `other` are the same recording, so nothing is lost by letting it go
+    if (stems.length && token === loadToken && !error.value) await adoptStems(stems, token)
+  }
+
+  function clearStems() {
+    stemBuffers.clear()
+    stemPeaksPer.clear()
+    stemPrevVolume.clear()
+    stemNames.value = []
+    stemVolume.value = {}
+    stemPeaks.value = new Uint8Array()
+  }
+
+  const gainVector = () => stemNames.value.map((n) => stemVolume.value[n] ?? 1)
+
+  /**
+   * The waveform for the current fader positions: the per-stem peaks at their gains.
+   *
+   * Power, not amplitude: parts do not hit their peaks in the same instant, so adding
+   * their bytes overstates the mix by several decibels and pins it at the top of the
+   * scale. Adding their squares is the usual estimate for parts that are not in lockstep.
+   */
+  function recomputeStemPeaks() {
+    const names = stemNames.value
+    if (!names.length) return (stemPeaks.value = new Uint8Array())
+    const len = names.reduce((m, n) => Math.max(m, stemPeaksPer.get(n)?.length ?? 0), 0)
+    const out = new Uint8Array(len)
+    for (let i = 0; i < len; i++) {
+      let power = 0
+      for (const n of names) {
+        const level = (stemVolume.value[n] ?? 1) * (stemPeaksPer.get(n)?.[i] ?? 0)
+        power += level * level
+      }
+      out[i] = Math.min(255, Math.round(Math.sqrt(power)))
+    }
+    stemPeaks.value = out
+  }
+
+  /** Decode the stems and switch playback over to their blend, holding the playhead. */
+  async function adoptStems(sources: StemSource[], token: number) {
+    const ctx = audioContext()
+    let decoded: (readonly [StemSource, AudioBuffer])[]
+    try {
+      decoded = await Promise.all(sources.map(async (s) => [s, await ctx.decodeAudioData(await s.read())] as const))
+    } catch (e) {
+      console.error('Failed to load the stems, staying on the full mix:', e)
+      return
+    }
+    if (token !== loadToken) return
+
+    clearStems()
+    for (const [source, buf] of decoded) {
+      stemBuffers.set(source.name, buf)
+      stemPeaksPer.set(source.name, computePeaks(buf))
+      stemPrevVolume.set(source.name, source.volume || 1)
+    }
+    stemNames.value = decoded.map(([s]) => s.name)
+    stemVolume.value = Object.fromEntries(decoded.map(([s]) => [s.name, s.volume]))
+    recomputeStemPeaks()
+
+    // switch playback from the whole-track buffer to the stem blend, holding the playhead
+    const at = currentTime.value
+    const wasPlaying = playing.value
+    teardownShifter()
+    buffer = null // the blend comes from the stems now, not the single buffer
+    currentTime.value = Math.min(at, duration.value)
+    if (wasPlaying) await play()
+  }
+
+  /** Set one stem's level, 0..1. Live: the worklet gets the new gains, the waveform re-weights. */
+  function setStemVolume(name: string, value: number) {
+    if (!stemPeaksPer.has(name)) return
+    stemVolume.value = { ...stemVolume.value, [name]: Math.max(0, Math.min(1, value)) }
+    shifter?.port.postMessage({ gains: gainVector() })
+    recomputeStemPeaks()
+  }
+
+  /** Icon click: drop a stem to silence, or bring it back to where its fader was. */
+  function toggleStemMute(name: string) {
+    const current = stemVolume.value[name] ?? 1
+    if (current > 0) {
+      stemPrevVolume.set(name, current)
+      setStemVolume(name, 0)
+    } else {
+      setStemVolume(name, stemPrevVolume.get(name) || 1)
+    }
   }
 
   /**
@@ -134,7 +241,7 @@ export function useAudioEngine() {
       error.value = 'Could not start audio - needs https and a 2021 or newer browser'
       return null
     }
-    if (token !== loadToken || !buffer) return null
+    if (token !== loadToken || (!buffer && !stemBuffers.size)) return null
 
     const node = new AudioWorkletNode(ctx, 'soundtouch-processor', {
       numberOfInputs: 0,
@@ -143,19 +250,24 @@ export function useAudioEngine() {
     })
     node.port.onmessage = ({ data }) => data.ended && pause()
 
-    const channels = [buffer.getChannelData(0), buffer.getChannelData(buffer.numberOfChannels > 1 ? 1 : 0)]
-    node.port.postMessage(
-      { channels, startFrame: Math.round(currentTime.value * ctx.sampleRate) },
-      [...new Set(channels.map((c) => c.buffer))] // mono hands us the same channel twice
-    )
-    buffer = null
+    const startFrame = Math.round(currentTime.value * ctx.sampleRate)
+    if (stemBuffers.size) {
+      const stems = stemNames.value.map((n) => asStereo(stemBuffers.get(n)!))
+      node.port.postMessage({ stems, gains: gainVector(), startFrame }, [...new Set(stems.flat().map((c) => c.buffer))])
+      stemBuffers.clear() // channels are transferred; the peaks copy is what survives
+    } else {
+      // mono hands us the same channel twice, so the transfer list has to be deduplicated
+      const channels = asStereo(buffer!)
+      node.port.postMessage({ channels, startFrame }, [...new Set(channels.map((c) => c.buffer))])
+      buffer = null
+    }
     shifter = node
     return node
   }
 
   function ensureShifter() {
     if (shifter) return Promise.resolve(shifter)
-    if (!buffer) return Promise.resolve(null)
+    if (!buffer && !stemBuffers.size) return Promise.resolve(null)
     return (shifterPending ??= createShifter(loadToken).then((node) => {
       if (!node) shifterPending = null // so a later play can try again
       return node
@@ -263,6 +375,7 @@ export function useAudioEngine() {
 
   onUnmounted(() => {
     teardownShifter()
+    clearStems()
     buffer = null
     gain = null
     limiter = null
@@ -274,5 +387,6 @@ export function useAudioEngine() {
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
     loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
+    stemNames, stemVolume, stemPeaks, setStemVolume, toggleStemMute,
   }
 }

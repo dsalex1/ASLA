@@ -1,6 +1,7 @@
 import { Song } from '@/types'
 
-export const audioTrackRefs = (song: Song) => (song.audioTracks ?? []).flatMap((t) => [t.storageRef, t.peaksRef])
+export const audioTrackRefs = (song: Song) =>
+  (song.audioTracks ?? []).flatMap((t) => [t.storageRef, t.peaksRef, ...(t.stems ?? []).map((s) => s.storageRef)])
 
 /** Every storage path the song mentions. */
 export const allSongRefs = (song: Song) =>

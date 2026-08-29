@@ -26,6 +26,31 @@ export type Folder = {
   name: string
 }
 
+/** One separated part of a track. Its peaks are computed on decode, so only audio is stored. */
+export type Stem = {
+  name: string
+  storageRef: string
+  /** 0..1, shared like tempo and markers: the band hears the same mix */
+  volume: number
+}
+
+/** A separation in flight, kept on the track so every device shows the same state. */
+export type StemJob = {
+  taskId: string
+  requested: string[]
+  startedAt: string
+  by: string
+  phase: 'separating' | 'storing'
+  error?: string
+}
+
+/** What the separation service detected about the recording itself, as it reported it. */
+export type TrackAnalysis = {
+  bpm?: number
+  key?: string
+  tuning?: number
+}
+
 export type AudioTrack = {
   name: string
   storageRef: string
@@ -38,6 +63,11 @@ export type AudioTrack = {
   tempo?: number // playback rate, 1 = original
   pitch?: number // semitones, -12..12
   gainDb?: number // level trim in dB, 0 = untouched
+  stems?: Stem[]
+  stemJob?: StemJob
+  analysis?: TrackAnalysis
+  /** where the file came from, when it was not a local upload */
+  source?: { kind: 'youtube'; videoId: string; title: string }
 }
 
 export type Song = {
