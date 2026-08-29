@@ -169,13 +169,16 @@ export async function splitTrack(song: Song, index: number, requested: string[],
 
   // an earlier split's stems are replaced by name, so "add piano" keeps what is there
   const kept = (track.stems ?? []).filter((s) => !stored.some((n) => n.stem.name === s.name))
-  const analysis = { bpm: result.bpm, key: result.key, tuning: result.tuning }
+  // only what came back: Firestore rejects an undefined however deeply it is nested
+  const analysis = Object.fromEntries(
+    Object.entries({ bpm: result.bpm, key: result.key, tuning: result.tuning }).filter(([, v]) => v != null)
+  )
   await patchTrack(
     song,
     index,
     {
       stems: [...kept, ...stored.map((s) => s.stem)].sort((a, b) => stemOrder(a.name, b.name)),
-      analysis: Object.values(analysis).some((v) => v != null) ? analysis : undefined,
+      analysis: Object.keys(analysis).length ? analysis : undefined,
       // section boundaries are markers, but only for a track that has none of its own
       ...(result.segments?.length && !track.markers.length
         ? { markers: [...new Set(result.segments.map((s) => Math.round(s.start * 10) / 10))].sort((a, b) => a - b) }
