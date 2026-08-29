@@ -31,7 +31,7 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
   )
 
   async function resolveFileUrl(song: Song | CustomSetlistEntry) {
-    if (!('pdfStorageRef' in song)) return ''
+    if ('title' in song) return '' // a custom setlist entry has no files of its own
     const resolve = (ref: string) => resolveRef(ref, song.hashes?.[ref])
     const resolveAll = (refs: string[]) => Promise.all(refs.map(resolve))
 

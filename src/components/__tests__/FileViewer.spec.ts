@@ -63,6 +63,16 @@ describe('FileViewer file resolution', () => {
     expect(w.find('img').attributes('src')).toBe('https://files.test/drums_images/a_1.webp')
   })
 
+  // the guard that tells a song from a custom setlist entry used to test for a sheet pdf,
+  // so a song that only ever had a drum chart resolved to nothing and rendered blank
+  it('resolves the drums file for a song that has no sheet at all', async () => {
+    const w = await mountViewer({
+      songs: [song({ drumsPdfImageStorageRefs: ['drums_images/a_1.webp'] })],
+      mode: 'drums',
+    })
+    expect(w.find('img').attributes('src')).toBe('https://files.test/drums_images/a_1.webp')
+  })
+
   it('shows lyrics with a hint when the song has no sheet for this mode', async () => {
     const w = await mountViewer({ songs: [song({ lyrics: 'hello world' })], mode: 'chords' })
     expect(w.text()).toContain('No sheet file')
