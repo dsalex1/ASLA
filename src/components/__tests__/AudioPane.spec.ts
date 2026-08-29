@@ -113,9 +113,11 @@ describe('AudioPane track loading', () => {
   })
 
   describe('a song with no audio', () => {
-    it('says so in the strip where the wave would be', async () => {
+    it('offers the import in the strip where the wave would be', async () => {
       const wrapper = await mountPane([])
-      expect(wrapper.text()).toContain('No audio available')
+      expect(wrapper.text()).toContain('No audio')
+      await wrapper.find('.add-audio').trigger('click')
+      expect(wrapper.emitted('addAudio')).toHaveLength(1)
     })
 
     it('still offers the whole view switcher', async () => {
