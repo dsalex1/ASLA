@@ -372,10 +372,6 @@ defineExpose({ position: currentTime })
         @moveLoop="setLoop"
         @zoom="zoom"
       />
-      <button v-if="!hasAudio && !showsSlot" class="add-audio" @click="emit('addAudio')">
-        <i class="fab fa-youtube" />
-        Add audio from YouTube
-      </button>
       <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane">
         <slot name="view" :position="currentTime" :playing="playing" :height="viewHeight" />
       </div>
@@ -460,7 +456,13 @@ defineExpose({ position: currentTime })
         :position="currentTime"
         @seek="engine.seek"
       />
-      <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">No audio available</div>
+      <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">
+        <button class="add-audio" @click="emit('addAudio')">
+          No audio -
+          <i class="fab fa-youtube" />
+          add a track from YouTube
+        </button>
+      </div>
     </div>
 
     <!-- everything to do with the A-B loop, kept out of the way until asked for -->
@@ -569,20 +571,14 @@ defineExpose({ position: currentTime })
 }
 
 .add-audio {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: fit-content;
-  height: fit-content;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
+  gap: 8px;
+  padding: 6px 14px;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   background: #141414;
   color: #ddd;
-  font-size: 15px;
   cursor: pointer;
 }
 .add-audio i {

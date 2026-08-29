@@ -112,7 +112,8 @@ async function storeStem(song: Song, name: string, url: string) {
   const blob = await response.blob()
   const ref = firebaseRef(getStorage(), `audio/${song.id}_${Date.now()}_${name}.m4a`)
   const hash = await uploadHashed(ref, blob, { contentType: 'audio/mp4' })
-  return { stem: { name, storageRef: ref.fullPath, volume: 1 } as Stem, hash }
+  // the click is an addition to the recording rather than a part of it, so it starts off
+  return { stem: { name, storageRef: ref.fullPath, volume: name === METRONOME ? 0 : 1 } as Stem, hash }
 }
 
 /**

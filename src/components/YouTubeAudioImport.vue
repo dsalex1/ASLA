@@ -121,7 +121,7 @@ async function pick(id: string, title: string) {
       density="compact"
       hide-details
       append-inner-icon="fas fa-magnifying-glass"
-      @keyup.enter="pastedId ? pick(pastedId, terms) : search()"
+      @keydown.enter="pastedId ? pick(pastedId, terms) : search()"
       @click:append-inner="pastedId ? pick(pastedId, terms) : search()"
     />
 
