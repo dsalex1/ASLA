@@ -152,9 +152,22 @@ describe('FileViewer lyrics rendering', () => {
 describe('FileViewer transpose', () => {
   const transposed = song({ id: 's1', lyrics: 'C\nla', transpose: 2 })
 
-  it('shows the transpose chip in chords mode when not annotatable', async () => {
+  it('offers the transpose in chords mode even where the chords cannot be edited', async () => {
     const w = await mountViewer({ songs: [transposed], mode: 'chords' })
-    expect(w.find('.v-chip').text()).toContain('+2')
+    expect(w.text()).toContain('+2')
+    expect(w.findAll('.v-btn').some((b) => b.find('.fa-arrow-up').exists())).toBe(true)
+  })
+
+  it('reads the chords a fret lower per capo, without touching the song', async () => {
+    const w = await mountViewer({ songs: [transposed], mode: 'chords' })
+    expect(w.find('strong').text()).toBe('D')
+    await w.findAll('.v-icon').find((i) => i.classes().some((c) => c === 'fa-plus'))!.trigger('click')
+    expect(w.find('.v-chip').text()).toContain('Capo 1')
+    expect(w.find('strong').text()).toBe('C#')
+    expect(updateDoc).not.toHaveBeenCalled()
+    // the capo lives on the device, so it outlives this test unless it is put back
+    await w.findAll('.v-icon').find((i) => i.classes().some((c) => c === 'fa-minus'))!.trigger('click')
+    expect(w.find('strong').text()).toBe('D')
   })
 
   it('applies the transpose to the displayed chords', async () => {

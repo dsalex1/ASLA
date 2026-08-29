@@ -6,6 +6,7 @@ import FileNavStrip from '@/components/FileNavStrip.vue'
 import LyricsPane from '@/components/LyricsPane.vue'
 import SheetPane from '@/components/SheetPane.vue'
 import SongEdit from '@/components/SongEdit.vue'
+import { useCapo } from '@/composables/useCapo'
 import SongInfoBar from '@/components/SongInfoBar.vue'
 import { useAnnotations } from '@/composables/useAnnotations'
 import { useOnline } from '@vueuse/core'
@@ -159,6 +160,9 @@ onUnmounted(() => metronome.release())
 
 // --- chord transposition & inline chord editing (lyrics chord view) ---
 const transpose = computed(() => song.value?.transpose || 0)
+// a capo raises what is heard, so the chords to read sit that far below the song's key
+const capo = useCapo(() => song.value?.id)
+const displayTranspose = computed(() => transpose.value - capo.value)
 
 // base rapid clicks on the last written value, not the (async) snapshot
 let transposeTarget: number | null = null
@@ -227,6 +231,7 @@ const noSheetHint = computed(() =>
       :mode="mode"
       :annotatable="annotatable"
       :transpose="transpose"
+      v-model:capo="capo"
       :shown="shown"
       :available="available"
       :canAnnotate="!!annotations.refPath.value"
@@ -270,6 +275,7 @@ const noSheetHint = computed(() =>
         :shown="shown"
         :available="available"
         v-model:view="view"
+        :chordTranspose="shown == 'chords' ? displayTranspose : undefined"
         @prevSong="goToSong(-1)"
         @nextSong="goToSong(1)"
         @addAudio=";((editFocus = 'youtube'), (editDialogOpen = true))"
@@ -296,7 +302,7 @@ const noSheetHint = computed(() =>
             showModeration
             :noSheetHint="noSheetHint"
             :fontSize="fontSize"
-            :transpose="shown == 'chords' ? transpose : 0"
+            :transpose="shown == 'chords' ? displayTranspose : 0"
             :position="position"
             :autoScroll="playing"
             @update:lyrics="(lyrics) => saveSong({ lyrics })"
@@ -327,7 +333,7 @@ const noSheetHint = computed(() =>
         :showModeration="shown == 'lyrics'"
         :noSheetHint="noSheetHint"
         :fontSize="fontSize"
-        :transpose="shown == 'chords' ? transpose : 0"
+        :transpose="shown == 'chords' ? displayTranspose : 0"
         :editable="annotatable && shown == 'chords'"
         v-model:autoScroll="autoScroll"
         @update:lyrics="(lyrics) => saveSong({ lyrics })"

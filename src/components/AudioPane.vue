@@ -22,6 +22,8 @@ const props = defineProps<{
   shown: PaneView
   /** which views this song has anything for, so the rest can be greyed out */
   available: Record<PaneView, boolean>
+  /** the semitones the chords are being displayed at, to compare against the audio's pitch */
+  chordTranspose?: number
 }>()
 
 const emit = defineEmits<{
@@ -493,6 +495,15 @@ defineExpose({ position: currentTime })
           <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
         </select>
         <span v-else-if="track" class="track-name">{{ track.name }}</span>
+        <!-- the two are deliberately independent, which is exactly why a gap is worth saying -->
+        <span
+          v-if="hasAudio && pitch !== (chordTranspose ?? pitch)"
+          class="job"
+          title="The audio is pitched away from the chords on screen"
+        >
+          <i class="fas fa-triangle-exclamation" />
+          chords {{ (chordTranspose ?? 0) > pitch ? 'above' : 'below' }} the audio
+        </span>
         <button
           v-if="stemNames.length"
           class="tbtn"
