@@ -3,9 +3,11 @@
 // backgrounded PWAs, which killed the previous lookahead scheduler; a looping
 // buffer keeps playing. audioSession type 'playback' (iOS 16.4+) marks it as
 // media so it survives backgrounding/screen lock and the mute switch.
-export function createMetronome(getBpm: () => number) {
+// onRemote fires when the headset/lock-screen transport keys are pressed.
+export function createMetronome(getBpm: () => number, onRemote?: (play: boolean) => void) {
   let ctx: AudioContext | null = null
   let source: AudioBufferSourceNode | null = null
+  let silent: HTMLAudioElement | null = null
 
   function beatBuffer(c: AudioContext) {
     const sr = c.sampleRate
@@ -21,7 +23,25 @@ export function createMetronome(getBpm: () => number) {
     if (ctx && document.visibilityState === 'visible' && ctx.state !== 'running') ctx.resume()
   }
 
+  // The transport keys only reach a page that owns the media session, and only
+  // an HTMLMediaElement claims one - the click is Web Audio, which no platform
+  // treats as media. So a silent track runs alongside it (Chrome ignores media
+  // shorter than 5s) and keeps playing while the click is stopped, so 'play'
+  // can start it again.
+  function claimMediaKeys() {
+    if (!onRemote || !navigator.mediaSession) return
+    if (!silent) {
+      silent = new Audio(URL.createObjectURL(new Blob([silentWav(30)], { type: 'audio/wav' })))
+      silent.loop = true
+      navigator.mediaSession.setActionHandler('play', () => onRemote(true))
+      navigator.mediaSession.setActionHandler('pause', () => onRemote(false))
+    }
+    silent.play().catch(() => {})
+  }
+
   function start() {
+    claimMediaKeys()
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing'
     if (ctx) return
     const audioSession = (navigator as { audioSession?: { type: string } }).audioSession
     if (audioSession) audioSession.type = 'playback'
@@ -35,6 +55,7 @@ export function createMetronome(getBpm: () => number) {
   }
 
   function stop() {
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused'
     document.removeEventListener('visibilitychange', onVisible)
     source?.stop()
     ctx?.close()
@@ -42,5 +63,40 @@ export function createMetronome(getBpm: () => number) {
     ctx = null
   }
 
-  return { start, stop }
+  // leaving the view: give the media session back
+  function release() {
+    stop()
+    silent?.pause()
+    if (silent) URL.revokeObjectURL(silent.src)
+    silent = null
+    if (navigator.mediaSession) {
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.playbackState = 'none'
+    }
+  }
+
+  return { start, stop, release }
+}
+
+// 8-bit mono silence, header written by hand so no asset has to be shipped
+function silentWav(seconds: number) {
+  const rate = 8000
+  const n = seconds * rate
+  const bytes = new Uint8Array(44 + n).fill(128, 44)
+  const dv = new DataView(bytes.buffer)
+  const ascii = (at: number, s: string) => [...s].forEach((c, i) => (bytes[at + i] = c.charCodeAt(0)))
+  ascii(0, 'RIFF')
+  dv.setUint32(4, 36 + n, true)
+  ascii(8, 'WAVEfmt ')
+  dv.setUint32(16, 16, true)
+  dv.setUint16(20, 1, true) // PCM
+  dv.setUint16(22, 1, true) // mono
+  dv.setUint32(24, rate, true)
+  dv.setUint32(28, rate, true)
+  dv.setUint16(32, 1, true)
+  dv.setUint16(34, 8, true)
+  ascii(36, 'data')
+  dv.setUint32(40, n, true)
+  return bytes
 }

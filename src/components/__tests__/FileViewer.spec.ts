@@ -5,8 +5,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const metronome = { start: vi.fn(), stop: vi.fn() }
-vi.mock('@/helpers/metronome', () => ({ createMetronome: () => metronome }))
+const metronome = { start: vi.fn(), stop: vi.fn(), release: vi.fn() }
+let remoteControl: (play: boolean) => void
+vi.mock('@/helpers/metronome', () => ({
+  createMetronome: (_bpm: () => number, onRemote: (play: boolean) => void) => ((remoteControl = onRemote), metronome),
+}))
 // a song with a track would otherwise have the audio pane reach for the real files
 vi.mock('@/helpers/audioTracks', () => ({
   loadPeaks: () => Promise.resolve(new Uint8Array(1000)),
@@ -176,6 +179,16 @@ describe('FileViewer drums metronome', () => {
   it('is not offered without a bpm', async () => {
     const w = await mountViewer({ songs: [song({ lyrics: 'la' })], mode: 'drums' })
     expect(bpmButton(w)).toBeUndefined()
+  })
+
+  it('starts and stops the click from the headset transport keys', async () => {
+    const w = await mountViewer({ songs: [song({ bpm: 120, lyrics: 'la' })], mode: 'drums' })
+    remoteControl(true)
+    await flushPromises()
+    expect(metronome.start).toHaveBeenCalledOnce()
+    expect(bpmButton(w)!.text()).toContain('120')
+    remoteControl(false)
+    expect(metronome.stop).toHaveBeenCalledOnce()
   })
 
   it('stops the click when the song changes', async () => {

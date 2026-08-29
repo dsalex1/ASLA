@@ -133,11 +133,17 @@ const autoScroll = ref(false)
 // --- Drummer click (metronome) ---
 const currentBpm = computed(() => song.value?.bpm || 0)
 const clicking = ref(false)
-const metronome = createMetronome(() => currentBpm.value)
+// headset/lock-screen play & pause drive the same click (AirPods, car stereo, ...)
+const metronome = createMetronome(() => currentBpm.value, (play) => setClick(play))
+
+function setClick(on: boolean) {
+  if (on && !currentBpm.value) return
+  clicking.value = on
+  on ? metronome.start() : metronome.stop()
+}
 
 function toggleClick() {
-  clicking.value = !clicking.value
-  clicking.value ? metronome.start() : metronome.stop()
+  setClick(!clicking.value)
 }
 
 // stop the click when leaving the song or if it loses its bpm
@@ -147,7 +153,7 @@ watch([currentSong, currentBpm], () => {
     clicking.value = false
   }
 })
-onUnmounted(() => metronome.stop())
+onUnmounted(() => metronome.release())
 
 // --- chord transposition & inline chord editing (lyrics chord view) ---
 const transpose = computed(() => song.value?.transpose || 0)
