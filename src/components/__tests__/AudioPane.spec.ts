@@ -35,6 +35,11 @@ const engine = {
     reduction: -4,
   })),
   skip: vi.fn(),
+  stemNames: ref<string[]>([]),
+  stemVolume: ref<Record<string, number>>({}),
+  stemPeaks: ref(new Uint8Array()),
+  setStemVolume: vi.fn(),
+  toggleStemMute: vi.fn(),
 }
 vi.mock('@/composables/useAudioEngine', () => ({ useAudioEngine: () => engine }))
 vi.mock('@/helpers/audioTracks', () => ({
@@ -101,7 +106,7 @@ describe('AudioPane track loading', () => {
     await mountPane([track({ markers: [5, 10], loopA: 5, loopB: 10, tempo: 0.8, pitch: -2 })])
     expect(loadPeaks).toHaveBeenCalledOnce()
     // duration up front so the waveform is scrubbable while decoding
-    expect(engine.load).toHaveBeenCalledWith(expect.any(Function), 100)
+    expect(engine.load).toHaveBeenCalledWith(expect.any(Function), 100, [])
     await (engine.load as unknown as { mock: { calls: [() => Promise<ArrayBuffer>][] } }).mock.calls[0][0]()
     expect(audioBytes).toHaveBeenCalledOnce()
     expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, 5, 10])

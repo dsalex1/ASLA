@@ -1,0 +1,107 @@
+<script setup lang="ts">
+import { stemIcon, stemLabel } from '@/helpers/stems'
+
+defineProps<{ names: string[]; volume: Record<string, number> }>()
+
+defineEmits<{ setVolume: [name: string, value: number]; mute: [name: string] }>()
+</script>
+
+<template>
+  <div class="mixer">
+    <div v-for="name in names" :key="name" class="row" :class="{ off: (volume[name] ?? 1) === 0 }">
+      <button
+        class="lbl"
+        :title="(volume[name] ?? 1) === 0 ? `Unmute ${stemLabel(name)}` : `Mute ${stemLabel(name)}`"
+        @click="$emit('mute', name)"
+      >
+        <i :class="stemIcon(name)" />
+        <span>{{ stemLabel(name) }}</span>
+      </button>
+      <input
+        class="fader"
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        :value="volume[name] ?? 1"
+        :aria-label="`${stemLabel(name)} volume`"
+        @input="$emit('setVolume', name, +($event.target as HTMLInputElement).value)"
+      />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.mixer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 18px;
+  width: 100%;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.lbl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 96px;
+  flex: none;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #d7d7d7;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lbl i {
+  width: 16px;
+  color: #38a700;
+}
+.row.off .lbl,
+.row.off .lbl i {
+  color: #5f5f5f;
+}
+.row.off .lbl span {
+  text-decoration: line-through;
+}
+.fader {
+  flex: 1;
+  min-width: 60px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #2a2a2a;
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+/* both engines need their own thumb rule */
+.fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #f2f2f2;
+  border: 0;
+  cursor: pointer;
+}
+.fader::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: #f2f2f2;
+  cursor: pointer;
+}
+.row.off .fader::-webkit-slider-thumb {
+  background: #666;
+}
+.row.off .fader::-moz-range-thumb {
+  background: #666;
+}
+</style>

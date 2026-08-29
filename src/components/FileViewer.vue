@@ -118,6 +118,8 @@ const annotWidth = ref(2)
 
 // --- quick edit of the current song ---
 const editDialogOpen = ref(false)
+/** set when the dialog was opened to add audio, so it can start where that is done */
+const editFocus = ref<'youtube' | undefined>()
 const editableSong = computed(() => (song.value?.id ? song.value : undefined))
 
 function goToSong(delta: number) {
@@ -187,7 +189,7 @@ const noSheetHint = computed(() =>
       <div>
         <slot></slot>
       </div>
-      <v-btn v-if="editableSong" icon="fas fa-pen" size="small" variant="text" @click="editDialogOpen = true" />
+      <v-btn v-if="editableSong" icon="fas fa-pen" size="small" variant="text" @click=";((editFocus = undefined), (editDialogOpen = true))" />
       <FileNavStrip
         :files="fileContents"
         :fileIndex="currentFileIndex"
@@ -270,6 +272,7 @@ const noSheetHint = computed(() =>
         v-model:view="view"
         @prevSong="goToSong(-1)"
         @nextSong="goToSong(1)"
+        @addAudio=";((editFocus = 'youtube'), (editDialogOpen = true))"
       >
         <template #view="{ position, playing, height: paneHeight }">
           <!-- the same page turn as everywhere else: without it the second page of a
@@ -354,6 +357,7 @@ const noSheetHint = computed(() =>
       <SongEdit
         v-if="editableSong"
         :song="editableSong"
+        :focus="editFocus"
         @close="editDialogOpen = false"
         @deleted=";((editDialogOpen = false), emit('songDeleted'))"
       />

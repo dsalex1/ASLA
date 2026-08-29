@@ -106,7 +106,7 @@ async function patchTrack(song: Song, index: number, patch: Partial<AudioTrack>,
 }
 
 /** Downloads one finished stem and stores it beside the track it came from. */
-async function storeStem(song: Song, track: AudioTrack, name: string, url: string) {
+async function storeStem(song: Song, name: string, url: string) {
   const response = await fetch(url)
   if (!response.ok) throw new Error(`downloading the ${name} stem failed (${response.status})`)
   const blob = await response.blob()
@@ -126,26 +126,28 @@ export async function splitTrack(song: Song, index: number, requested: string[],
   const wantsMetronome = requested.includes(METRONOME)
   const stems = requested.filter((name) => name !== METRONOME)
 
-  let taskId = job?.taskId
-  if (!taskId) {
+  // a retry drops whatever the last attempt failed with; Firestore rejects an undefined
+  const retried = job?.taskId ? { ...job, phase: 'separating' as const } : undefined
+  if (retried) delete retried.error
+  let current: StemJob
+  if (retried) current = retried
+  else {
     const url = await getDownloadURL(firebaseRef(getStorage(), track.storageRef))
     const started = await call('/split', { method: 'POST', body: JSON.stringify({ url, stems, name: track.name }) })
-    taskId = started.taskId as string
-    await patchTrack(song, index, {
-      stemJob: {
-        taskId,
-        requested,
-        startedAt: new Date().toISOString(),
-        by: auth.currentUser?.email ?? 'someone',
-        phase: 'separating',
-      },
-    })
+    current = {
+      taskId: started.taskId as string,
+      requested,
+      startedAt: new Date().toISOString(),
+      by: auth.currentUser?.email ?? 'someone',
+      phase: 'separating',
+    }
   }
+  await patchTrack(song, index, { stemJob: current })
 
   let result: SplitResult = { status: 'PENDING' }
   const until = Date.now() + 20 * 60_000
   for (;;) {
-    result = (await call(`/split?taskId=${encodeURIComponent(taskId!)}`)) as SplitResult
+    result = (await call(`/split?taskId=${encodeURIComponent(current.taskId)}`)) as SplitResult
     if (result.status === 'COMPLETED') break
     if (result.status === 'FAILED' || result.status === 'ERROR') throw new Error(result.error ?? 'separation failed')
     if (Date.now() > until) throw new Error('separation timed out')
@@ -156,13 +158,12 @@ export async function splitTrack(song: Song, index: number, requested: string[],
   if (!wantsMetronome) delete urls[METRONOME]
   else if (result.metronome) urls[METRONOME] = result.metronome
 
-  const current = { ...track, stemJob: { ...(job ?? {}), taskId, phase: 'storing' } as StemJob }
-  await patchTrack(song, index, { stemJob: current.stemJob })
+  await patchTrack(song, index, { stemJob: { ...current, phase: 'storing' } })
 
   const stored = await Promise.all(
     Object.entries(urls)
       .sort(([a], [b]) => stemOrder(a, b))
-      .map(([name, url]) => storeStem(song, track, name, url))
+      .map(([name, url]) => storeStem(song, name, url))
   )
 
   // an earlier split's stems are replaced by name, so "add piano" keeps what is there

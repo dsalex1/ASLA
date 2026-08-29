@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import JogStrip from '@/components/JogStrip.vue'
+import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioBytes, loadPeaks } from '@/helpers/audioTracks'
 import { estimateLag, Reading } from '@/helpers/levelAlign'
 import { PANE_VIEW_ICONS, PANE_VIEWS } from '@/helpers/paneViews'
+import { stemSources } from '@/helpers/stems'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, PaneView, Song } from '@/types'
 import { useDebounceFn, useElementSize, useLocalStorage } from '@vueuse/core'
@@ -25,6 +27,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'prevSong'): void
   (e: 'nextSong'): void
+  /** no audio yet: send the user to the import in the song's settings */
+  (e: 'addAudio'): void
 }>()
 
 const view = defineModel<PaneView>('view', { required: true })
@@ -37,12 +41,17 @@ const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instea
 
 const engine = useAudioEngine()
 const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB, limiterCeilingDb } = engine
+const { stemNames, stemVolume, stemPeaks } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
 const startingTrack = () => Math.min(props.song.selectedAudioTrack ?? 0, Math.max(tracks.value.length - 1, 0))
 const trackIndex = ref(startingTrack())
 const track = computed((): AudioTrack | undefined => tracks.value[trackIndex.value])
 const peaks = ref(new Uint8Array())
+// once the stems are in, the waveform is their blend, so it follows the faders
+const shownPeaks = computed(() => (stemPeaks.value.length ? stemPeaks.value : peaks.value))
+const mixerOpen = ref(false)
+const job = computed(() => track.value?.stemJob)
 const markers = ref<number[]>([])
 const hasAudio = computed(() => !!track.value)
 // the stored duration stands in until the file has decoded, so the whole track can be
@@ -79,7 +88,7 @@ watch(
     span.value = Math.min(DEFAULT_SPAN, current.duration)
     peaks.value = new Uint8Array()
     peaks.value = await loadPeaks(current, props.song.hashes)
-    await engine.load(() => audioBytes(current, props.song.hashes), current.duration)
+    await engine.load(() => audioBytes(current, props.song.hashes), current.duration, stemSources(current, props.song.hashes))
   },
   { immediate: true }
 )
@@ -91,6 +100,8 @@ const persist = useDebounceFn(() => {
     if (i !== trackIndex.value) return t
     // Firestore rejects undefined, so a cleared A-B has to be left out entirely
     const next: AudioTrack = { ...t, markers: markers.value, tempo: tempo.value, pitch: pitch.value, gainDb: gainDb.value }
+    // the mix belongs to the song, like the tempo: the band hears what was set up
+    if (t.stems?.length) next.stems = t.stems.map((s) => ({ ...s, volume: stemVolume.value[s.name] ?? s.volume }))
     delete next.loopA
     delete next.loopB
     if (loopA.value != null) next.loopA = loopA.value
@@ -100,7 +111,17 @@ const persist = useDebounceFn(() => {
   updateDoc(doc(songCollection, props.song.id), { audioTracks: updated, selectedAudioTrack: trackIndex.value })
 }, 500)
 
-watch([markers, loopA, loopB, tempo, pitch, gainDb, trackIndex], persist, { deep: true })
+watch([markers, loopA, loopB, tempo, pitch, gainDb, trackIndex, stemVolume], persist, { deep: true })
+
+// a split that finished elsewhere, or one this device just ran: pick the stems up
+watch(
+  () => track.value?.stems?.map((s) => s.storageRef).join(),
+  (next, previous) => {
+    const current = track.value
+    if (!current || next === previous) return
+    engine.load(() => audioBytes(current, props.song.hashes), current.duration, stemSources(current, props.song.hashes))
+  }
+)
 
 // --- markers ---
 const nearestMarker = (seconds: number) =>
@@ -328,7 +349,7 @@ defineExpose({ position: currentTime })
         v-if="hasAudio"
         v-show="!showsSlot"
         draggable
-        :peaks="peaks"
+        :peaks="shownPeaks"
         :duration="trackDuration"
         :start="windowStart"
         :end="windowEnd"
@@ -349,6 +370,10 @@ defineExpose({ position: currentTime })
         @moveLoop="setLoop"
         @zoom="zoom"
       />
+      <button v-if="!hasAudio && !showsSlot" class="add-audio" @click="emit('addAudio')">
+        <i class="fab fa-youtube" />
+        Add audio from YouTube
+      </button>
       <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane">
         <slot name="view" :position="currentTime" :playing="playing" :height="viewHeight" />
       </div>
@@ -437,6 +462,15 @@ defineExpose({ position: currentTime })
     </div>
 
     <!-- everything to do with the A-B loop, kept out of the way until asked for -->
+    <div v-if="hasAudio && mixerOpen && stemNames.length" class="controls">
+      <StemMixer
+        :names="stemNames"
+        :volume="stemVolume"
+        @setVolume="engine.setStemVolume"
+        @mute="engine.toggleStemMute"
+      />
+    </div>
+
     <div v-if="hasAudio && loopBarOpen" class="controls loop-row">
       <div class="group">
         <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
@@ -459,6 +493,19 @@ defineExpose({ position: currentTime })
           <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
         </select>
         <span v-else-if="track" class="track-name">{{ track.name }}</span>
+        <button
+          v-if="stemNames.length"
+          class="tbtn"
+          :class="{ 'tbtn--on': mixerOpen }"
+          :aria-label="mixerOpen ? 'Hide the stem mixer' : 'Show the stem mixer'"
+          @click="mixerOpen = !mixerOpen"
+        >
+          <i class="fas fa-sliders" />
+        </button>
+        <span v-else-if="job" class="job" :title="`${job.by} started this ${job.requested.join(', ')} split`">
+          <i class="fas fa-circle-notch fa-spin" />
+          {{ job.phase === 'storing' ? 'Storing stems' : 'Separating' }}...
+        </span>
         <button
           v-if="hasAudio"
           class="tbtn"
@@ -508,6 +555,35 @@ defineExpose({ position: currentTime })
 .audio-pane {
   background: #050505;
   color: #eee;
+}
+
+.add-audio {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  background: #141414;
+  color: #ddd;
+  font-size: 15px;
+  cursor: pointer;
+}
+.add-audio i {
+  color: #ff0033;
+}
+
+.job {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9a9a9a;
 }
 
 .controls {
