@@ -12,6 +12,7 @@
     "build:beta": "vue-tsc -b && vite build --mode beta",
     "build:isla": "vue-tsc -b && vite build --mode isla",
     "deploy:beta": "node scripts/deployBeta.mjs",
+    "cors:isla": "gcloud storage buckets update gs://ibis-setlist-app.firebasestorage.app --cors-file=storage.cors.json",
     "deploy:isla": "npm run build:isla && firebase deploy --config firebase.isla.json --project ibis-setlist-app",
     "preview": "vite preview",
     "test": "vitest run",

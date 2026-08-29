@@ -1,0 +1,12 @@
+[
+  {
+    "origin": [
+      "https://ibis-setlist-app.web.app",
+      "https://ibis-setlist-app.firebaseapp.com",
+      "http://localhost:5173"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Cache-Control", "Content-Disposition"],
+    "maxAgeSeconds": 3600
+  }
+]

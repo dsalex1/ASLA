@@ -38,6 +38,7 @@
     "rules": "rules/firestore.rules"
   },
   "storage": {
+    "bucket": "ibis-setlist-app.firebasestorage.app",
     "rules": "rules/storage.rules"
   }
 }
