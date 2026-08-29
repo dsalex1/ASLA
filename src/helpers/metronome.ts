@@ -25,9 +25,10 @@ export function createMetronome(getBpm: () => number, onRemote?: (play: boolean)
 
   // The transport keys only reach a page that owns the media session, and only
   // an HTMLMediaElement claims one - the click is Web Audio, which no platform
-  // treats as media. So a silent track runs alongside it (Chrome ignores media
-  // shorter than 5s) and keeps playing while the click is stopped, so 'play'
-  // can start it again.
+  // treats as media. So a silent track runs alongside the click (Chrome ignores
+  // media shorter than 5s) and is paused and resumed with it: a headset button
+  // toggles on what the platform sees actually playing, not on playbackState,
+  // so a track left running would go on asking for 'pause' forever.
   function claimMediaKeys() {
     if (!onRemote || !navigator.mediaSession) return
     if (!silent) {
@@ -42,31 +43,37 @@ export function createMetronome(getBpm: () => number, onRemote?: (play: boolean)
   function start() {
     claimMediaKeys()
     if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing'
-    if (ctx) return
-    const audioSession = (navigator as { audioSession?: { type: string } }).audioSession
-    if (audioSession) audioSession.type = 'playback'
-    ctx = new AudioContext()
+    // the context outlives a stop: a remote 'play' is not a user gesture everywhere,
+    // and a fresh context would come up suspended and stay silent
+    if (!ctx) {
+      const audioSession = (navigator as { audioSession?: { type: string } }).audioSession
+      if (audioSession) audioSession.type = 'playback'
+      ctx = new AudioContext()
+      document.addEventListener('visibilitychange', onVisible)
+    }
+    ctx.resume()
+    if (source) return
     source = ctx.createBufferSource()
     source.buffer = beatBuffer(ctx)
     source.loop = true
     source.connect(ctx.destination)
     source.start()
-    document.addEventListener('visibilitychange', onVisible)
   }
 
   function stop() {
     if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused'
-    document.removeEventListener('visibilitychange', onVisible)
+    silent?.pause()
     source?.stop()
-    ctx?.close()
+    source?.disconnect()
     source = null
-    ctx = null
   }
 
-  // leaving the view: give the media session back
+  // leaving the view: give the media session and the audio hardware back
   function release() {
     stop()
-    silent?.pause()
+    document.removeEventListener('visibilitychange', onVisible)
+    ctx?.close()
+    ctx = null
     if (silent) URL.revokeObjectURL(silent.src)
     silent = null
     if (navigator.mediaSession) {
