@@ -1,7 +1,7 @@
 {
   "name": "alex-set-list-app",
   "private": true,
-  "version": "0.0.33",
+  "version": "0.0.34",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,13 +16,7 @@
     "deploy:isla": "npm run build:isla && firebase deploy --config firebase.isla.json --project ibis-setlist-app",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "build:worklet": "esbuild src/audio/soundtouchWorklet.js --bundle --format=iife --target=safari14 --outfile=public/soundtouch-worklet.js",
-    "predev": "npm run build:worklet",
-    "predev:test": "npm run build:worklet",
-    "prebuild": "npm run build:worklet",
-    "prebuild:beta": "npm run build:worklet",
-    "prebuild:isla": "npm run build:worklet"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@vueuse/core": "^10.11.0",
@@ -31,7 +25,7 @@
     "idb-keyval": "^6.2.1",
     "pdfjs-dist": "3",
     "pinia": "^2.1.7",
-    "soundtouchjs": "^0.3.0",
+    "signalsmith-stretch": "^1.3.2",
     "vite-plugin-pwa": "^0.20.0",
     "vite-plugin-vuetify": "^2.0.3",
     "vue": "^3.5.41",

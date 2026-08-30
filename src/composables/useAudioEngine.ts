@@ -1,11 +1,9 @@
 import { computePeaks } from '@/helpers/audioPeaks'
+import SignalsmithStretch, { type StretchNode } from 'signalsmith-stretch'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 /** what a worklet is handed per call, and so how far its output trails the playhead */
 const RENDER_QUANTUM = 128
-
-// bundled separately, since a worklet cannot resolve soundtouchjs itself - see build:worklet
-const WORKLET_URL = `${import.meta.env.BASE_URL}soundtouch-worklet.js`
 
 /** One stem to load with the track: its bytes, and the level it was left at. */
 export type StemSource = { name: string; volume: number; read: () => Promise<ArrayBuffer> }
@@ -14,6 +12,16 @@ export type StemSource = { name: string; volume: number; read: () => Promise<Arr
  * Streaming is not an option here: independent tempo and pitch need the whole
  * track decoded up front, so a track is fetched, decoded and kept in memory
  * while it is selected, and released as soon as another one is.
+ *
+ * The graph is
+ *
+ *   source per stem -> gain per stem -> mix -> [stretch] -> gain -> limiter -> speakers
+ *
+ * Tempo is `playbackRate` on the sources, which is native, sample-accurate and free —
+ * but it transposes as it stretches, so Signalsmith Stretch is asked for whatever pitch
+ * is left over (`shiftSemitones`) to put the key back. At 1x and 0 semitones there is
+ * nothing left over and the mix goes straight to the output: a spectral engine always
+ * processes, so routing through it at unity would be loss and nothing else.
  */
 export function useAudioEngine() {
   const currentTime = ref(0)
@@ -30,22 +38,28 @@ export function useAudioEngine() {
   const loopEnabled = ref(true)
 
   // --- stems ---------------------------------------------------------------------------
-  // A split track is handed to the worklet as every stem plus a gain per stem, and the
-  // blend is summed on the audio thread: moving a fader is one message, not a re-mix, and
-  // the single shifter still does tempo and pitch on the result. The waveform is the same
-  // blend, approximated from per-stem peaks so it tracks the faders.
+  // A split track gets a source and a GainNode per stem and the graph sums them, so moving
+  // a fader is a native gain ramp: nothing is re-mixed, nothing is messaged, and the single
+  // stretcher downstream still works on the blend. The waveform is the same blend,
+  // approximated from per-stem peaks so it tracks the faders.
   const stemNames = ref<string[]>([])
   const stemVolume = ref<Record<string, number>>({})
   /** peaks of the current blend, for the waveform; empty while the track is unsplit */
   const stemPeaks = ref<Uint8Array>(new Uint8Array())
-  const stemBuffers = new Map<string, AudioBuffer>() // spent once handed to the worklet
+  const stemBuffers = new Map<string, AudioBuffer>() // kept: the sources read straight out of these
   const stemPeaksPer = new Map<string, Uint8Array>() // kept, so the waveform can re-weight
   const stemPrevVolume = new Map<string, number>() // what a stem returns to when un-muted
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
-  let shifter: AudioWorkletNode | null = null
-  let shifterPending: Promise<AudioWorkletNode | null> | null = null
+  let mix: GainNode | null = null
+  const stemGains = new Map<string, GainNode>()
+  let sources: AudioBufferSourceNode[] = []
+  let stretch: StretchNode | null = null
+  let stretchPending: Promise<StretchNode | null> | null = null
+  /** what the stretcher adds on the way through — measured, not assumed */
+  let stretchLatency = 0
+  let bypassed = true
   let gain: GainNode | null = null
   let limiter: DynamicsCompressorNode | null = null
   let preTap: AnalyserNode | null = null
@@ -53,8 +67,6 @@ export function useAudioEngine() {
   let loadToken = 0
 
   const audioContext = () => (context ??= new AudioContext())
-
-  const asStereo = (b: AudioBuffer) => [b.getChannelData(0), b.getChannelData(b.numberOfChannels > 1 ? 1 : 0)]
 
   const amplitude = (db: number) => 10 ** (db / 20)
 
@@ -77,7 +89,7 @@ export function useAudioEngine() {
   }
 
   /**
-   * shifter -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
+   * ... -> gain -> limiter -> speakers. The trim can boost by 20 dB, which would
    * clip on its own, so a brick-wall limiter sits after it: it is inaudible while the
    * signal stays under the threshold and only bites once the boost would have clipped.
    */
@@ -103,11 +115,16 @@ export function useAudioEngine() {
     return gain
   }
 
+  function stopSources() {
+    for (const s of sources) (s.stop(), s.disconnect())
+    sources = []
+  }
 
-  function teardownShifter() {
-    shifter?.disconnect()
-    shifter = null
-    shifterPending = null
+  function teardownGraph() {
+    stopSources()
+    mix?.disconnect()
+    mix = null
+    stemGains.clear()
     pause()
   }
 
@@ -118,7 +135,7 @@ export function useAudioEngine() {
    */
   async function load(read: () => Promise<ArrayBuffer>, knownDuration = 0, stems: StemSource[] = []) {
     const token = ++loadToken
-    teardownShifter()
+    teardownGraph()
     clearStems()
     buffer = null
     duration.value = knownDuration
@@ -151,8 +168,6 @@ export function useAudioEngine() {
     stemVolume.value = {}
     stemPeaks.value = new Uint8Array()
   }
-
-  const gainVector = () => stemNames.value.map((n) => stemVolume.value[n] ?? 1)
 
   /**
    * The waveform for the current fader positions: the per-stem peaks at their gains.
@@ -202,17 +217,18 @@ export function useAudioEngine() {
     // switch playback from the whole-track buffer to the stem blend, holding the playhead
     const at = currentTime.value
     const wasPlaying = playing.value
-    teardownShifter()
+    teardownGraph()
     buffer = null // the blend comes from the stems now, not the single buffer
     currentTime.value = Math.min(at, duration.value)
     if (wasPlaying) await play()
   }
 
-  /** Set one stem's level, 0..1. Live: the worklet gets the new gains, the waveform re-weights. */
+  /** Set one stem's level, 0..1. Live: a short ramp on its gain, and the waveform re-weights. */
   function setStemVolume(name: string, value: number) {
     if (!stemPeaksPer.has(name)) return
-    stemVolume.value = { ...stemVolume.value, [name]: Math.max(0, Math.min(1, value)) }
-    shifter?.port.postMessage({ gains: gainVector() })
+    const level = Math.max(0, Math.min(1, value))
+    stemVolume.value = { ...stemVolume.value, [name]: level }
+    if (context) stemGains.get(name)?.gain.setTargetAtTime(level, context.currentTime, 0.01)
     recomputeStemPeaks()
   }
 
@@ -227,55 +243,88 @@ export function useAudioEngine() {
     }
   }
 
+  // --- the stretcher --------------------------------------------------------------------
+
   /**
-   * The whole track is handed to the worklet once, transferred rather than copied so a
-   * long recording is never held twice; `buffer` is spent afterwards and dropped.
+   * What to ask the stretcher for. `playbackRate` has already transposed the track by the
+   * tempo, so the shift undoes that before it applies the capo the user asked for.
    */
-  async function createShifter(token: number) {
+  const shiftSemitones = () => pitch.value - 12 * Math.log2(tempo.value)
+
+  /** at unity there is nothing for a spectral engine to do to the signal but degrade it */
+  const isUnity = () => tempo.value === 1 && pitch.value === 0
+
+  /** built on first use, so a track played straight through never pays for the WASM */
+  function ensureStretch() {
+    return (stretchPending ??= SignalsmithStretch(audioContext())
+      .then(async (node) => {
+        node.connect(output())
+        node.start()
+        stretchLatency = await node.latency()
+        return (stretch = node)
+      })
+      .catch((e) => {
+        // it runs in a worklet, which needs a secure origin: plain http on a LAN will not do
+        console.error('Failed to start the pitch shifter:', e)
+        error.value = 'Could not start audio - needs https and a 2021 or newer browser'
+        stretchPending = null
+        return null
+      }))
+  }
+
+  /** Point the mix at the stretcher, or past it when there is nothing to shift. */
+  async function route() {
+    const node = isUnity() ? null : await ensureStretch()
+    bypassed = !node
+    node?.schedule({ semitones: shiftSemitones() })
+    if (!mix) return
+    mix.disconnect()
+    mix.connect(node ?? output())
+  }
+
+  // --- playback -------------------------------------------------------------------------
+
+  /** every stem, or the plain track as the one-stem case */
+  const tracks = (): (readonly [string, AudioBuffer])[] =>
+    stemBuffers.size
+      ? stemNames.value.map((n) => [n, stemBuffers.get(n)!] as const)
+      : buffer
+        ? [['', buffer] as const]
+        : []
+
+  function buildGraph() {
     const ctx = audioContext()
-    try {
-      // this needs a secure origin, so plain http on a LAN address will not do
-      await ctx.audioWorklet.addModule(WORKLET_URL)
-    } catch (e) {
-      console.error('Failed to load the audio worklet:', e)
-      error.value = 'Could not start audio - needs https and a 2021 or newer browser'
-      return null
+    mix = ctx.createGain()
+    for (const [name] of tracks()) {
+      if (!name) continue
+      const g = ctx.createGain()
+      g.gain.value = stemVolume.value[name] ?? 1
+      g.connect(mix)
+      stemGains.set(name, g)
     }
-    if (token !== loadToken || (!buffer && !stemBuffers.size)) return null
-
-    const node = new AudioWorkletNode(ctx, 'soundtouch-processor', {
-      numberOfInputs: 0,
-      outputChannelCount: [2],
-      processorOptions: { tempo: tempo.value, pitch: pitch.value },
-    })
-    node.port.onmessage = ({ data }) => data.ended && pause()
-
-    const startFrame = Math.round(currentTime.value * ctx.sampleRate)
-    if (stemBuffers.size) {
-      const stems = stemNames.value.map((n) => asStereo(stemBuffers.get(n)!))
-      node.port.postMessage({ stems, gains: gainVector(), startFrame }, [...new Set(stems.flat().map((c) => c.buffer))])
-      stemBuffers.clear() // channels are transferred; the peaks copy is what survives
-    } else {
-      // mono hands us the same channel twice, so the transfer list has to be deduplicated
-      const channels = asStereo(buffer!)
-      node.port.postMessage({ channels, startFrame }, [...new Set(channels.map((c) => c.buffer))])
-      buffer = null
-    }
-    shifter = node
-    return node
   }
 
-  function ensureShifter() {
-    if (shifter) return Promise.resolve(shifter)
-    if (!buffer && !stemBuffers.size) return Promise.resolve(null)
-    return (shifterPending ??= createShifter(loadToken).then((node) => {
-      if (!node) shifterPending = null // so a later play can try again
-      return node
-    }))
+  /**
+   * Sources are one-shot, so starting, seeking and crossing the bypass each mean a fresh
+   * set. They read the same AudioBuffers throughout — the samples are never copied, which
+   * is what lets a five minute track with four stems be seeked without re-sending it.
+   */
+  function startSources(at: number) {
+    stopSources()
+    const ctx = audioContext()
+    for (const [name, buf] of tracks()) {
+      if (at >= buf.duration) continue
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.playbackRate.value = tempo.value
+      src.connect(stemGains.get(name) ?? mix!)
+      src.start(0, at)
+      sources.push(src)
+    }
   }
 
-  // SoundTouch reports how far it has read ahead, which leads what you hear by a few
-  // hundred ms, so the playhead is driven off the audio clock instead.
+  // The playhead is driven off the audio clock: the stretcher's own `inputTime` reports
+  // how far it has read ahead, which leads what you hear by a block or two.
   let baseContextTime = 0
   let baseTrackTime = 0
   let frame: number | null = null
@@ -285,7 +334,23 @@ export function useAudioEngine() {
     baseTrackTime = currentTime.value
   }
 
-  const positionNow = () => baseTrackTime + (audioContext().currentTime - baseContextTime) * tempo.value
+  /**
+   * How long ago the sound reaching the output right now left the sources. The stretcher
+   * holds ~120 ms of its own whenever the mix runs through it; at unity it is out of the
+   * path and costs nothing.
+   */
+  const engineLag = () => (bypassed ? 0 : stretchLatency)
+
+  /**
+   * Where the sound now leaving the graph sits in the track, which is what the waveform
+   * should draw rather than where the sources have got to. The lag is measured in output
+   * seconds, so it stands for that much more of the track the faster it is being played.
+   *
+   * For the first `engineLag` after starting or seeking, nothing from the new position has
+   * come out of the stretcher yet, so the playhead waits there rather than running backwards.
+   */
+  const positionNow = () =>
+    baseTrackTime + Math.max(0, audioContext().currentTime - baseContextTime - engineLag()) * tempo.value
 
   function tick() {
     if (!playing.value) return
@@ -298,13 +363,13 @@ export function useAudioEngine() {
   }
 
   async function play() {
-    const s = await ensureShifter()
-    if (!s) return
+    if (!tracks().length) return
     await audioContext().resume()
+    if (!mix) buildGraph()
+    await route()
     if (looping() && (currentTime.value < loopA.value! || currentTime.value >= loopB.value!)) seek(loopA.value!)
+    startSources(currentTime.value)
     rebase()
-    s.connect(output())
-    s.port.postMessage({ playing: true })
     playing.value = true
     tick()
   }
@@ -313,8 +378,7 @@ export function useAudioEngine() {
     // frames stop while the page is hidden, so take the position from the clock rather
     // than trusting whatever the last frame wrote
     if (playing.value) currentTime.value = Math.max(0, Math.min(positionNow(), duration.value))
-    shifter?.port.postMessage({ playing: false })
-    shifter?.disconnect()
+    stopSources()
     playing.value = false
     if (frame) cancelAnimationFrame(frame)
     frame = null
@@ -332,9 +396,9 @@ export function useAudioEngine() {
    * than one peak: a caller that knows where the playhead is can place every sample at
    * the moment it belongs to, instead of smearing the whole window over one instant.
    *
-   * `latency` is how far behind the playhead that window sits: the shifter computes a
-   * render quantum at a time, so what it produced for a given position only reaches the
-   * graph a quantum later, and that offset is what would otherwise drag readings late.
+   * `latency` is how far behind the playhead that window sits: a render quantum, as
+   * before. The stretcher's own delay does not enter into it — the taps sit after it, so
+   * it is already in what they hold, and the playhead has already subtracted it.
    */
   function levels() {
     preTap?.getFloatTimeDomainData(preSamples)
@@ -348,25 +412,29 @@ export function useAudioEngine() {
     }
   }
 
-  const seekShifter = (seconds: number) => {
-    shifter?.port.postMessage({ seekFrame: Math.round(seconds * audioContext().sampleRate) })
-  }
-
   function seek(seconds: number) {
     if (!Number.isFinite(seconds)) return // a seek from a not-yet-measured waveform must not poison the position
     currentTime.value = Math.max(0, Math.min(seconds, duration.value))
-    seekShifter(currentTime.value)
+    if (playing.value) startSources(currentTime.value)
     rebase()
   }
 
   const skip = (seconds: number) => seek(currentTime.value + seconds)
 
-  // the clock slope changes with tempo, so restart the measurement from here
-  watch(tempo, (v) => {
-    rebase()
-    shifter?.port.postMessage({ tempo: v })
-  })
-  watch(pitch, (v) => shifter?.port.postMessage({ pitch: v }))
+  /**
+   * Tempo goes on the sources and the leftover pitch on the stretcher, both live and both
+   * without a break. Only crossing into or out of the bypass needs more than that: it
+   * moves the output by the stretcher's 120 ms, so the sources restart to line back up.
+   */
+  async function retune() {
+    for (const s of sources) s.playbackRate.value = tempo.value
+    const was = bypassed
+    await route()
+    if (playing.value && bypassed !== was) startSources(currentTime.value)
+    rebase() // the clock slope changes with tempo, so restart the measurement from here
+  }
+
+  watch([tempo, pitch], () => void retune())
   // ramped rather than set, so dragging the trim does not click
   watch(gainDb, (v) => {
     gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01)
@@ -374,9 +442,12 @@ export function useAudioEngine() {
   })
 
   onUnmounted(() => {
-    teardownShifter()
+    teardownGraph()
     clearStems()
     buffer = null
+    stretch?.disconnect()
+    stretch = null
+    stretchPending = null
     gain = null
     limiter = null
     preTap = postTap = null

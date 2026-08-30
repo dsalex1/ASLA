@@ -28,20 +28,26 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 } 
 
-declare module 'soundtouchjs' {
-  /** Time-stretch / pitch-shift source node wrapping a decoded AudioBuffer. */
-  export class PitchShifter {
-    constructor(context: BaseAudioContext, buffer: AudioBuffer, bufferSize: number, onEnd?: () => void)
-    readonly duration: number
-    readonly timePlayed: number
-    percentagePlayed: number
-    tempo: number
-    rate: number
-    pitch: number
-    pitchSemitones: number
-    connect(node: AudioNode): void
-    disconnect(): void
-    on(event: 'play', cb: (detail: { timePlayed: number; percentagePlayed: number }) => void): void
-    off(event?: string): void
+// the package ships JS only; this is the slice of its documented surface the engine uses
+declare module 'signalsmith-stretch' {
+  export interface StretchNode extends AudioWorkletNode {
+    /** how far it has read into its input buffers; unused in live-input mode */
+    readonly inputTime: number
+    schedule(change: {
+      output?: number
+      active?: boolean
+      rate?: number
+      semitones?: number
+      loopStart?: number
+      loopEnd?: number
+    }): Promise<unknown>
+    start(when?: number): Promise<unknown>
+    stop(when?: number): Promise<unknown>
+    /** seconds it adds on the way through, in live-input mode */
+    latency(): Promise<number>
   }
+  export default function SignalsmithStretch(
+    context: BaseAudioContext,
+    options?: AudioWorkletNodeOptions
+  ): Promise<StretchNode>
 }
