@@ -51,13 +51,17 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
   constructor({ processorOptions }) {
     super()
     this.pipe = new SoundTouch()
-    this.pipe.tempo = processorOptions.tempo
-    this.pipe.pitchSemitones = processorOptions.pitch
+    this.tempo = processorOptions.tempo
+    this.pitch = processorOptions.pitch
+    this.pipe.tempo = this.tempo
+    this.pipe.pitchSemitones = this.pitch
     this.filter = null
     this.source = null
     // the track is handed over separately, so its channels can be transferred rather than copied
     this.playing = false
     this.ended = false
+    /** the source frame the output has reached, which is what the two paths hand each other */
+    this.position = 0
     this.interleaved = new Float32Array(128 * 2)
     this.port.onmessage = ({ data }) => this.receive(data)
   }
@@ -65,7 +69,17 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
   start(stems, gains, startFrame) {
     this.source = new StemSource(stems, gains)
     this.filter = new SimpleFilter(this.source, this.pipe)
-    this.filter.sourcePosition = startFrame
+    this.seekTo(startFrame)
+  }
+
+  /** at its own speed and pitch a track is played as recorded, with no stretching at all */
+  get unaltered() {
+    return this.tempo === 1 && this.pitch === 0
+  }
+
+  seekTo(frame) {
+    this.position = frame
+    if (this.filter) this.filter.sourcePosition = frame // this clears the pipe for us
     this.ended = false
   }
 
@@ -75,13 +89,14 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     if (data.stems) this.start(data.stems.map(toStem), Float32Array.from(data.gains), data.startFrame)
     // a fader move is just new gains — no re-mix, the next extract picks them up
     if (data.gains && this.source && !data.stems) this.source.gains = Float32Array.from(data.gains)
-    if (data.tempo !== undefined) this.pipe.tempo = data.tempo
-    if (data.pitch !== undefined) this.pipe.pitchSemitones = data.pitch
+    const wasUnaltered = this.unaltered
+    if (data.tempo !== undefined) (this.tempo = data.tempo), (this.pipe.tempo = data.tempo)
+    if (data.pitch !== undefined) (this.pitch = data.pitch), (this.pipe.pitchSemitones = data.pitch)
+    // only crossing between the two paths needs a resync: whichever is taking over starts
+    // from where the output had actually got to, and a move within one path is left alone
+    if (this.unaltered !== wasUnaltered) this.seekTo(Math.round(this.position))
     if (data.playing !== undefined) this.playing = data.playing
-    if (data.seekFrame !== undefined && this.filter) {
-      this.filter.sourcePosition = data.seekFrame // this clears the pipe for us
-      this.ended = false
-    }
+    if (data.seekFrame !== undefined && this.filter) this.seekTo(data.seekFrame)
   }
 
   process(_inputs, outputs) {
@@ -91,7 +106,15 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
 
     const frames = left.length
     if (this.interleaved.length < frames * 2) this.interleaved = new Float32Array(frames * 2)
-    const extracted = this.filter.extract(this.interleaved, frames)
+    // SoundTouch splices the track back together out of overlapped sequences, and does so
+    // even at 1x, where the seam lands a few ms off every time and a held note wobbles.
+    // With nothing to stretch there is nothing to splice, so read the samples as they are.
+    const extracted = this.unaltered
+      ? this.source.extract(this.interleaved, frames, this.position)
+      : this.filter.extract(this.interleaved, frames)
+    // the stretcher reads ahead, so its own position is no use here: the output has
+    // covered a block of track per block rendered, which is what a switch of paths needs
+    this.position += this.unaltered ? extracted : frames * this.tempo
 
     if (extracted === 0) {
       this.ended = true
