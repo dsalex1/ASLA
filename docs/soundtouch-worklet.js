@@ -649,39 +649,50 @@
     constructor({ processorOptions }) {
       super();
       this.pipe = new SoundTouch();
-      this.pipe.tempo = processorOptions.tempo;
-      this.pipe.pitchSemitones = processorOptions.pitch;
+      this.tempo = processorOptions.tempo;
+      this.pitch = processorOptions.pitch;
+      this.pipe.tempo = this.tempo;
+      this.pipe.pitchSemitones = this.pitch;
       this.filter = null;
       this.source = null;
       this.playing = false;
       this.ended = false;
+      this.position = 0;
       this.interleaved = new Float32Array(128 * 2);
       this.port.onmessage = ({ data }) => this.receive(data);
     }
     start(stems, gains, startFrame) {
       this.source = new StemSource(stems, gains);
       this.filter = new SimpleFilter(this.source, this.pipe);
-      this.filter.sourcePosition = startFrame;
+      this.seekTo(startFrame);
+    }
+    /** at its own speed and pitch a track is played as recorded, with no stretching at all */
+    get unaltered() {
+      return this.tempo === 1 && this.pitch === 0;
+    }
+    seekTo(frame) {
+      this.position = frame;
+      if (this.filter) this.filter.sourcePosition = frame;
       this.ended = false;
     }
     receive(data) {
       if (data.channels) this.start([toStem(data.channels)], new Float32Array([1]), data.startFrame);
       if (data.stems) this.start(data.stems.map(toStem), Float32Array.from(data.gains), data.startFrame);
       if (data.gains && this.source && !data.stems) this.source.gains = Float32Array.from(data.gains);
-      if (data.tempo !== void 0) this.pipe.tempo = data.tempo;
-      if (data.pitch !== void 0) this.pipe.pitchSemitones = data.pitch;
+      const wasUnaltered = this.unaltered;
+      if (data.tempo !== void 0) this.tempo = data.tempo, this.pipe.tempo = data.tempo;
+      if (data.pitch !== void 0) this.pitch = data.pitch, this.pipe.pitchSemitones = data.pitch;
+      if (this.unaltered !== wasUnaltered) this.seekTo(Math.round(this.position));
       if (data.playing !== void 0) this.playing = data.playing;
-      if (data.seekFrame !== void 0 && this.filter) {
-        this.filter.sourcePosition = data.seekFrame;
-        this.ended = false;
-      }
+      if (data.seekFrame !== void 0 && this.filter) this.seekTo(data.seekFrame);
     }
     process(_inputs, outputs) {
       const [left, right] = outputs[0];
       if (!this.filter || !this.playing || this.ended) return true;
       const frames = left.length;
       if (this.interleaved.length < frames * 2) this.interleaved = new Float32Array(frames * 2);
-      const extracted = this.filter.extract(this.interleaved, frames);
+      const extracted = this.unaltered ? this.source.extract(this.interleaved, frames, this.position) : this.filter.extract(this.interleaved, frames);
+      this.position += this.unaltered ? extracted : frames * this.tempo;
       if (extracted === 0) {
         this.ended = true;
         this.port.postMessage({ ended: true });

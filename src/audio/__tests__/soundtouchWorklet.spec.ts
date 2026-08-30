@@ -11,6 +11,7 @@ beforeAll(async () => {
     port = { postMessage: () => {}, onmessage: null as any }
   }
   ;(globalThis as any).registerProcessor = (_name: string, cls: any) => (Processor = cls)
+  // @ts-expect-error the worklet is plain JS, and ships no types
   await import('../soundtouchWorklet.js')
 })
 
