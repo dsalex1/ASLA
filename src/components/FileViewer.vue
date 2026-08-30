@@ -131,7 +131,11 @@ function goToSong(delta: number) {
 }
 
 const fontSize = ref(16)
-const autoScroll = ref(false)
+// with a track to follow the words start out following it; without one, scrolling along
+// is a timer against the clock, and that is better asked for than assumed
+const autoScroll = ref(props.mode == 'audio')
+// every song starts followed again, so turning it off to read ahead does not carry over
+watch(currentSong, () => (autoScroll.value = props.mode == 'audio'))
 
 // --- Drummer click (metronome) ---
 const currentBpm = computed(() => song.value?.bpm || 0)
@@ -279,7 +283,7 @@ const noSheetHint = computed(() =>
         @nextSong="goToSong(1)"
         @addAudio=";((editFocus = 'youtube'), (editDialogOpen = true))"
       >
-        <template #view="{ position, playing, height: paneHeight }">
+        <template #view="{ position, height: paneHeight }">
           <!-- the same page turn as everywhere else: without it the second page of a
                sheet is out of reach while the transport is on screen. Only over a sheet,
                though: the words are scrolled by hand here while the audio plays. -->
@@ -303,7 +307,7 @@ const noSheetHint = computed(() =>
             :fontSize="fontSize"
             :transpose="shown == 'chords' ? displayTranspose : 0"
             :position="position"
-            :autoScroll="playing"
+            v-model:autoScroll="autoScroll"
             @update:lyrics="(lyrics) => saveSong({ lyrics })"
           />
         </template>

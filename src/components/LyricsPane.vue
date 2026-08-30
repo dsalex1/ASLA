@@ -23,14 +23,11 @@ const emit = defineEmits<{
 
 const container = ref<HTMLElement | null>(null)
 
-// While the playhead drives the scroll, reading ahead by hand pauses the following until
-// playback is started again — turning autoscroll off outright would be a worse trade,
-// because the caller has tied it to "is the audio playing".
-const cancelled = ref(false)
-watch(
-  () => props.autoScroll,
-  (on) => on && (cancelled.value = false)
-)
+// Where the scroll was last put from here. Anything else means the reader moved it, in
+// either direction — scrolling back to re-read stops the following just as reading ahead
+// does. Cleared whenever following is switched on, since that first jump is asked for.
+let placed: number | null = null
+watch([() => props.autoScroll, () => props.song], () => (placed = null))
 
 // scroll so the lyrics start moving `offset` seconds in and arrive 40s before the song ends
 const START_OFFSET = 20
@@ -42,15 +39,19 @@ function progressAt(seconds: number, offset: number) {
   return Math.max(0, Math.min((seconds - offset) / Math.max(end - offset, 1), 1))
 }
 
-/** returns false if the user scrolled away, which cancels autoscroll */
+/**
+ * Scrolls to where the song is, and returns false only if the reader has scrolled away —
+ * words that fit on screen have nothing to scroll, which is not a reason to give up.
+ */
 function applyProgress(progress: number, startScroll: number) {
   const el = container.value
-  if (!el) return false
+  if (!el) return true
   const endScroll = el.scrollHeight - el.clientHeight
-  if (endScroll <= 0) return false
+  if (endScroll <= 0) return true
+  if (placed != null && Math.abs(el.scrollTop - placed) > 10) return false // scrolled by hand
   const next = Math.round(startScroll + (endScroll - startScroll) * progress)
-  if (el.scrollTop - next > 10) return false // user scrolled more than 10px
   if (el.scrollTop != next) el.scrollTop = next
+  placed = next
   return true
 }
 
@@ -84,15 +85,16 @@ watch(
   { immediate: true }
 )
 
-// audio-driven autoscroll
-// the playhead maps straight onto a scroll position, so picking up after a manual scroll
-// lands where the song actually is rather than where the reader wandered off to
+// Audio-driven autoscroll. The playhead maps straight onto a scroll position rather than
+// advancing one, so it follows a seek backwards as readily as ordinary playback, and does
+// so while paused too. Scrolling away by hand turns it off, the same as the timer does.
 watch(
-  () => props.position,
-  (position) => {
-    if (position == null || !props.autoScroll || cancelled.value) return
-    if (!applyProgress(progressAt(position, START_OFFSET), 0)) cancelled.value = true
-  }
+  () => [props.position, props.autoScroll] as const,
+  ([position, on]) => {
+    if (position == null || !on) return
+    if (!applyProgress(progressAt(position, START_OFFSET), 0)) emit('update:autoScroll', false)
+  },
+  { immediate: true }
 )
 </script>
 

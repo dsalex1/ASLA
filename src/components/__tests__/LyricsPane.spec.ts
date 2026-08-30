@@ -52,13 +52,31 @@ describe('LyricsPane audio-driven scrolling', () => {
     expect(container.scrollTop).toBe(500) // left where the reader put it
   })
 
-  it('picks the lyrics back up when playback is started again', async () => {
+  it('follows the playhead backwards, and with nothing playing', async () => {
     const { wrapper, container } = await mountPane({ autoScroll: true, position: 0 })
+    await wrapper.setProps({ position: 160 })
+    expect(container.scrollTop).toBe(END_SCROLL)
+    await wrapper.setProps({ position: 90 }) // jumped back in the track
+    expect(container.scrollTop).toBe(Math.round(END_SCROLL / 2))
+  })
+
+  it('stops following when the reader scrolls back to re-read', async () => {
+    const { wrapper, container } = await mountPane({ autoScroll: true, position: 0 })
+    await wrapper.setProps({ position: 90 })
+    container.scrollTop = 100 // scrolled back by hand
+    await wrapper.setProps({ position: 95 })
+    expect(container.scrollTop).toBe(100)
+    expect(wrapper.emitted('update:autoScroll')?.at(-1)).toEqual([false])
+  })
+
+  it('re-arms when following is switched back on', async () => {
+    const { wrapper, container } = await mountPane({ autoScroll: true, position: 0 })
+    await wrapper.setProps({ position: 25 })
     container.scrollTop = 500
-    await wrapper.setProps({ position: 25 }) // cancels the follow
+    await wrapper.setProps({ position: 30 }) // the reader moved: following stops
+    expect(wrapper.emitted('update:autoScroll')?.at(-1)).toEqual([false])
     await wrapper.setProps({ autoScroll: false })
     await wrapper.setProps({ autoScroll: true })
-    container.scrollTop = 0
     await wrapper.setProps({ position: 90 })
     expect(container.scrollTop).toBe(Math.round(END_SCROLL / 2))
   })
