@@ -59,14 +59,6 @@ export default ({ mode }: { mode: string }) => {
       __APP_VERSION__: JSON.stringify(version),
       __BETA_BUILD__: JSON.stringify(process.env.BETA_BUILD ?? ''),
     },
-    // Signalsmith builds its worklet by stringifying its own source into a Blob, so anything
-    // that lowers the class fields in it lowers them into `__publicField` helpers that do not
-    // exist in worklet scope - the processor then dies on load and the node never becomes
-    // ready, which shows up as play() hanging rather than as an error. The dev dep optimiser
-    // does exactly that, so it is kept away from it. The production build targets modern
-    // browsers and leaves the fields alone; if the build target is ever lowered, check
-    // `__publicField` has not appeared in the bundle.
-    optimizeDeps: { exclude: ['signalsmith-stretch'] },
     resolve: {
       alias: {
         // the branded logo is a bundled asset, so the ISLA build swaps the module

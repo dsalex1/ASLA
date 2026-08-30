@@ -35,9 +35,7 @@ function node(__tag: string, extra: object = {}) {
 
 const param = (value = 0) => ({ value, setTargetAtTime: () => {} })
 
-vi.mock('signalsmith-stretch', () => ({
-  default: async () => stretchNode,
-}))
+vi.mock('@/audio/signalsmith', () => ({ stretchFactory: async () => async () => stretchNode }))
 
 class FakeAudioContext {
   currentTime = 0
