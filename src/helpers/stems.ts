@@ -4,7 +4,7 @@ import { resolveBytes } from '@/helpers/offlineCache'
 import { auth, songCollection } from '@/plugins/firebase'
 import { AudioTrack, Song, Stem, StemJob } from '@/types'
 import { doc, updateDoc } from 'firebase/firestore'
-import { ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
+import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 
 /**
  * Stem separation, driven through a worker that holds the Moises credential. The worker
@@ -92,6 +92,16 @@ async function call(path: string, init?: RequestInit) {
   return body
 }
 
+/** The stem files a track no longer refers to, dropped best-effort. */
+async function deleteStemFiles(stems: Stem[]) {
+  const storage = getStorage()
+  await Promise.all(
+    stems.map((stem) =>
+      deleteObject(firebaseRef(storage, stem.storageRef)).catch((e) => console.warn('Failed to delete a stem: ', e))
+    )
+  )
+}
+
 /** Writes one track back, leaving the song's other tracks alone. */
 async function patchTrack(song: Song, index: number, patch: Partial<AudioTrack>, hashes?: Record<string, string>) {
   if (!song.id) return
@@ -167,8 +177,8 @@ export async function splitTrack(song: Song, index: number, requested: string[],
       .map(([name, url]) => storeStem(song, name, url))
   )
 
-  // an earlier split's stems are replaced by name, so "add piano" keeps what is there
-  const kept = (track.stems ?? []).filter((s) => !stored.some((n) => n.stem.name === s.name))
+  // a split replaces whatever was there: stems are separated as a set, and a leftover
+  // from an earlier pass would be a part of a mix that no longer includes it
   // only what came back: Firestore rejects an undefined however deeply it is nested
   const analysis = Object.fromEntries(
     Object.entries({ bpm: result.bpm, key: result.key, tuning: result.tuning }).filter(([, v]) => v != null)
@@ -177,7 +187,7 @@ export async function splitTrack(song: Song, index: number, requested: string[],
     song,
     index,
     {
-      stems: [...kept, ...stored.map((s) => s.stem)].sort((a, b) => stemOrder(a.name, b.name)),
+      stems: stored.map((s) => s.stem).sort((a, b) => stemOrder(a.name, b.name)),
       analysis: Object.keys(analysis).length ? analysis : undefined,
       // section boundaries are markers, but only for a track that has none of its own
       ...(result.segments?.length && !track.markers.length
@@ -187,6 +197,8 @@ export async function splitTrack(song: Song, index: number, requested: string[],
     },
     Object.fromEntries(stored.map((s) => [s.stem.storageRef, s.hash]))
   )
+
+  await deleteStemFiles(track.stems ?? [])
 
   // the analysis fills in what the song is missing, and never overwrites a typed-in value
   const songPatch: Partial<Song> = {}
@@ -204,8 +216,12 @@ export const failJob = (song: Song, index: number, error: string) => {
 
 export const clearJob = (song: Song, index: number) => patchTrack(song, index, { stemJob: undefined })
 
-/** Removes a track's stems and forgets them; the audio itself is left for the GC. */
-export const removeStems = (song: Song, index: number) => patchTrack(song, index, { stems: undefined })
+/** Removes a track's stems, files and all. The track itself is untouched. */
+export async function removeStems(song: Song, index: number) {
+  const stems = song.audioTracks?.[index]?.stems ?? []
+  await patchTrack(song, index, { stems: undefined })
+  await deleteStemFiles(stems)
+}
 
 /** The stems of a track, ready for the engine: bytes from the offline copy when there is one. */
 export const stemSources = (track: AudioTrack, hashes?: Song['hashes']) =>

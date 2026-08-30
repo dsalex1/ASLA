@@ -275,7 +275,6 @@ const noSheetHint = computed(() =>
         :shown="shown"
         :available="available"
         v-model:view="view"
-        :chordTranspose="shown == 'chords' ? displayTranspose : undefined"
         @prevSong="goToSong(-1)"
         @nextSong="goToSong(1)"
         @addAudio=";((editFocus = 'youtube'), (editDialogOpen = true))"

@@ -33,10 +33,9 @@ defineEmits<{ setVolume: [name: string, value: number]; mute: [name: string] }>(
 
 <style scoped>
 .mixer {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 6px 18px;
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
 }
 .row {
   display: flex;
@@ -47,7 +46,7 @@ defineEmits<{ setVolume: [name: string, value: number]; mute: [name: string] }>(
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 96px;
+  width: 78px;
   flex: none;
   padding: 0;
   background: none;

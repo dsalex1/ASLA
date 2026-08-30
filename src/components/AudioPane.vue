@@ -10,7 +10,7 @@ import { PANE_VIEW_ICONS, PANE_VIEWS } from '@/helpers/paneViews'
 import { stemSources } from '@/helpers/stems'
 import { songCollection } from '@/plugins/firebase'
 import { AudioTrack, PaneView, Song } from '@/types'
-import { useDebounceFn, useElementSize, useLocalStorage } from '@vueuse/core'
+import { onClickOutside, useDebounceFn, useElementSize, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, ref, watch } from 'vue'
 
@@ -22,8 +22,6 @@ const props = defineProps<{
   shown: PaneView
   /** which views this song has anything for, so the rest can be greyed out */
   available: Record<PaneView, boolean>
-  /** the semitones the chords are being displayed at, to compare against the audio's pitch */
-  chordTranspose?: number
 }>()
 
 const emit = defineEmits<{
@@ -53,6 +51,8 @@ const peaks = ref(new Uint8Array())
 // once the stems are in, the waveform is their blend, so it follows the faders
 const shownPeaks = computed(() => (stemPeaks.value.length ? stemPeaks.value : peaks.value))
 const mixerOpen = ref(false)
+const mixerAnchor = ref<HTMLElement | null>(null)
+onClickOutside(mixerAnchor, () => (mixerOpen.value = false))
 const job = computed(() => track.value?.stemJob)
 const markers = ref<number[]>([])
 const hasAudio = computed(() => !!track.value)
@@ -466,15 +466,6 @@ defineExpose({ position: currentTime })
     </div>
 
     <!-- everything to do with the A-B loop, kept out of the way until asked for -->
-    <div v-if="hasAudio && mixerOpen && stemNames.length" class="controls">
-      <StemMixer
-        :names="stemNames"
-        :volume="stemVolume"
-        @setVolume="engine.setStemVolume"
-        @mute="engine.toggleStemMute"
-      />
-    </div>
-
     <div v-if="hasAudio && loopBarOpen" class="controls loop-row">
       <div class="group">
         <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
@@ -497,24 +488,24 @@ defineExpose({ position: currentTime })
           <option v-for="(t, i) in tracks" :key="t.storageRef" :value="i">{{ t.name }}</option>
         </select>
         <span v-else-if="track" class="track-name">{{ track.name }}</span>
-        <!-- the two are deliberately independent, which is exactly why a gap is worth saying -->
-        <span
-          v-if="hasAudio && pitch !== (chordTranspose ?? pitch)"
-          class="job"
-          title="The audio is pitched away from the chords on screen"
-        >
-          <i class="fas fa-triangle-exclamation" />
-          chords {{ (chordTranspose ?? 0) > pitch ? 'above' : 'below' }} the audio
-        </span>
-        <button
-          v-if="stemNames.length"
-          class="tbtn"
-          :class="{ 'tbtn--on': mixerOpen }"
-          :aria-label="mixerOpen ? 'Hide the stem mixer' : 'Show the stem mixer'"
-          @click="mixerOpen = !mixerOpen"
-        >
-          <i class="fas fa-sliders" />
-        </button>
+        <div v-if="stemNames.length" ref="mixerAnchor" class="mixer-anchor">
+          <button
+            class="tbtn"
+            :class="{ 'tbtn--on': mixerOpen }"
+            :aria-label="mixerOpen ? 'Hide the stem mixer' : 'Show the stem mixer'"
+            @click="mixerOpen = !mixerOpen"
+          >
+            <i class="fas fa-sliders" />
+          </button>
+          <div v-if="mixerOpen" class="mixer-popover">
+            <StemMixer
+              :names="stemNames"
+              :volume="stemVolume"
+              @setVolume="engine.setStemVolume"
+              @mute="engine.toggleStemMute"
+            />
+          </div>
+        </div>
         <span v-else-if="job" class="job" :title="`${job.by} started this ${job.requested.join(', ')} split`">
           <i class="fas fa-circle-notch fa-spin" />
           {{ job.phase === 'storing' ? 'Storing stems' : 'Separating' }}...
@@ -583,6 +574,25 @@ defineExpose({ position: currentTime })
 }
 .add-audio i {
   color: #ff0033;
+}
+
+.mixer-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* over the button it belongs to, and no wider than the faders need */
+.mixer-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 240px;
+  padding: 10px 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #141414;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 60%);
 }
 
 .job {

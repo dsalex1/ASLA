@@ -133,15 +133,27 @@ const playedKey = computed(() =>
         />
 
         <!-- and this device's own capo on top of it, which nobody else sees -->
-        <v-chip class="ms-2" size="small" :color="capo ? 'primary' : undefined" :variant="capo ? 'flat' : 'outlined'">
-          <v-icon start size="x-small" icon="fas fa-minus" title="Capo down a fret" @click.stop="capo = capo - 1" />
+        <v-btn
+          class="ms-4"
+          variant="tonal"
+          density="compact"
+          icon="fas fa-minus"
+          title="Capo down a fret, on this device only"
+          :disabled="capo <= -11"
+          @click="capo = capo - 1"
+        />
+        <span class="mx-2" :class="{ 'text-primary': capo }">
           Capo {{ capo }}
-          <v-icon end size="x-small" icon="fas fa-plus" title="Capo up a fret" @click.stop="capo = capo + 1" />
-          <template v-if="playedKey">
-            <span class="mx-1">-</span>
-            {{ playedKey }}
-          </template>
-        </v-chip>
+          <template v-if="playedKey">- {{ playedKey }}</template>
+        </span>
+        <v-btn
+          variant="tonal"
+          density="compact"
+          icon="fas fa-plus"
+          title="Capo up a fret, on this device only"
+          :disabled="capo >= 11"
+          @click="capo = capo + 1"
+        />
       </template>
       <v-btn class="ms-2" variant="tonal" density="compact" icon="fas fa-minus" @click="fontSize = Math.max(12, fontSize - 2)" />
       <span class="mx-2">{{ fontSize }}</span>

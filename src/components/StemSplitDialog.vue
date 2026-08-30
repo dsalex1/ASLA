@@ -51,6 +51,10 @@ function start() {
         <p class="text-body-2 text-grey mb-3">
           The parts you pick are separated once and stored with the song, so everyone gets them. Whatever is left over
           stays in the mix as "Other", and the whole track can still be heard with nothing muted.
+          <template v-if="track.stems?.length">
+            <br />
+            This replaces the stems the track has now.
+          </template>
         </p>
 
         <div class="d-flex flex-wrap ga-2 mb-3">
@@ -89,7 +93,13 @@ function start() {
       <v-card-actions>
         <v-spacer />
         <v-btn text="Cancel" @click="open = false" />
-        <v-btn color="primary" variant="flat" text="Split" :disabled="!canStart" @click="start" />
+        <v-btn
+          color="primary"
+          variant="flat"
+          :text="track.stems?.length ? 'Replace' : 'Split'"
+          :disabled="!canStart"
+          @click="start"
+        />
       </v-card-actions>
     </v-card>
   </v-dialog>

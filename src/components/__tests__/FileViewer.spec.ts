@@ -160,13 +160,17 @@ describe('FileViewer transpose', () => {
 
   it('reads the chords a fret lower per capo, without touching the song', async () => {
     const w = await mountViewer({ songs: [transposed], mode: 'chords' })
+    const capo = (direction: 'up' | 'down') =>
+      w.findAll('button').find((b) => b.attributes('title')?.startsWith(`Capo ${direction}`))!
     expect(w.find('strong').text()).toBe('D')
-    await w.findAll('.v-icon').find((i) => i.classes().some((c) => c === 'fa-plus'))!.trigger('click')
-    expect(w.find('.v-chip').text()).toContain('Capo 1')
+
+    await capo('up').trigger('click')
+    expect(w.text()).toContain('Capo 1')
     expect(w.find('strong').text()).toBe('C#')
     expect(updateDoc).not.toHaveBeenCalled()
+
     // the capo lives on the device, so it outlives this test unless it is put back
-    await w.findAll('.v-icon').find((i) => i.classes().some((c) => c === 'fa-minus'))!.trigger('click')
+    await capo('down').trigger('click')
     expect(w.find('strong').text()).toBe('D')
   })
 

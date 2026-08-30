@@ -509,8 +509,8 @@ async function deleteSong(song: Song) {
               v-else
               size="small"
               variant="text"
-              :prepend-icon="track.stems?.length ? 'fas fa-plus' : 'fas fa-wave-square'"
-              :text="track.stems?.length ? 'Add stems' : 'Split into stems'"
+              :prepend-icon="track.stems?.length ? 'fas fa-rotate' : 'fas fa-wave-square'"
+              :text="track.stems?.length ? 'Regenerate stems' : 'Split into stems'"
               :loading="splitting === index"
               @click="splitIndex = index"
             />
