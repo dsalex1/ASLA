@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
+import { Loop } from '@/types'
 import { useElementSize } from '@vueuse/core'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -14,6 +15,10 @@ const props = withDefaults(
     loopB?: number | null
     /** the loop repeats; when it does not, the region is still shown but greyed out */
     loopActive?: boolean
+    /** every loop on the track. The overview shows them all, each with a tappable name
+     * badge, so the whole set is visible and switching between them costs one press. */
+    loops?: Loop[]
+    selectedLoop?: number
     position: number
     /** the compact whole-track strip: no flags to grab, tap anywhere to seek */
     overview?: boolean
@@ -32,13 +37,14 @@ const props = withDefaults(
      * flattened against the edge */
     headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, loopActive: true, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
+  { loopA: null, loopB: null, loopActive: true, loops: () => [], selectedLoop: 0, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
 )
 
 const emit = defineEmits<{
   (e: 'seek', seconds: number): void
   (e: 'moveMarker', index: number, seconds: number): void
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
+  (e: 'selectLoop', index: number): void
   (e: 'zoom', span: number): void
 }>()
 
@@ -77,6 +83,7 @@ const FLAG_W = 26
 const FLAG_H = 26
 const HANDLE_W = 30
 const HANDLE_H = 60
+const BADGE_H = 16 // the loop name pill on the overview; also its hit target
 
 const wrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -356,6 +363,10 @@ function draw() {
     drawDbGrid(ctx)
   }
 
+  // every other loop on the track, so the whole set is visible at a glance; the selected
+  // one is drawn below with its handles and does not want drawing twice
+  if (props.overview) drawOtherLoops(ctx)
+
   // A-B repeat region, drawn over the wave so the looped part reads as one block
   const { loopA, loopB } = props
   if (loopA != null && loopB != null) {
@@ -383,6 +394,8 @@ function draw() {
     drawFlag(ctx, x, String(i + 1), isLoopBoundary(seconds))
   })
 
+  if (props.overview) drawLoopBadges(ctx)
+
   if (loopA != null) drawHandle(ctx, xOf(loopA), 'A')
   if (loopB != null) drawHandle(ctx, xOf(loopB), 'B')
 
@@ -393,6 +406,47 @@ function draw() {
   ctx.moveTo(playX, 0)
   ctx.lineTo(playX, height.value)
   ctx.stroke()
+}
+
+/** the loops that are not the selected one, as faint blocks behind it */
+function drawOtherLoops(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = COLORS.loopOffFill
+  props.loops.forEach((loop, i) => {
+    if (i === props.selectedLoop || loop.a == null || loop.b == null) return
+    ctx.fillRect(xOf(loop.a), 0, xOf(loop.b) - xOf(loop.a), height.value)
+  })
+}
+
+const loopLabel = (loop: Loop, index: number) => loop.name || String(index + 1)
+
+/**
+ * A name pill at the left edge of each loop. It is the only part of the overview that is
+ * not a seek, which is what lets the strip stay "tap anywhere to jump" while still being
+ * the loop list: the pill is a precise, phone-sized target and everything around it seeks.
+ */
+let badges: { x: number; width: number; index: number }[] = []
+
+function drawLoopBadges(ctx: CanvasRenderingContext2D) {
+  badges = []
+  ctx.font = 'bold 10px sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  props.loops.forEach((loop, i) => {
+    const at = loop.a ?? loop.b
+    if (at == null) return
+    const label = loopLabel(loop, i)
+    const box = ctx.measureText(label).width + 12
+    // kept on screen, so a loop that starts off the left edge still shows its name
+    const x = Math.max(1, Math.min(xOf(at) + 1, width.value - box - 1))
+    const chosen = i === props.selectedLoop
+    ctx.fillStyle = chosen ? loopColor.value : COLORS.loopOff
+    ctx.beginPath()
+    ctx.roundRect(x, 1, box, BADGE_H, 4)
+    ctx.fill()
+    ctx.fillStyle = chosen ? '#1a1a1a' : '#0d0d0d'
+    ctx.fillText(label, x + 6, 1 + BADGE_H / 2)
+    badges.push({ x, width: box, index: i })
+  })
 }
 
 /** markers sitting on an A-B bound (or inside the loop) turn orange */
@@ -416,7 +470,7 @@ function scheduleDraw() {
 onMounted(draw)
 
 watch(
-  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.loopActive, props.position, props.monitor, props.ceilingDb, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
+  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.loopActive, props.loops, props.selectedLoop, props.position, props.monitor, props.ceilingDb, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
   scheduleDraw,
   { immediate: true, deep: true }
 )
@@ -428,6 +482,7 @@ type Drag =
   | { kind: 'seek' }
   | { kind: 'marker'; index: number }
   | { kind: 'loop'; which: 'a' | 'b' }
+  | { kind: 'selectLoop'; index: number }
   | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
 
 let drag: Drag | null = null
@@ -439,7 +494,13 @@ function localX(e: PointerEvent) {
 }
 
 function hitTest(x: number, y: number): Drag {
-  if (props.overview) return { kind: 'seek' }
+  if (props.overview) {
+    if (y <= BADGE_H + 2) {
+      const badge = badges.find((b) => x >= b.x && x <= b.x + b.width)
+      if (badge) return { kind: 'selectLoop', index: badge.index }
+    }
+    return { kind: 'seek' }
+  }
   const handleTop = height.value * 0.55 - HANDLE_H / 2
   if (y >= handleTop && y <= handleTop + HANDLE_H) {
     if (props.loopA != null && Math.abs(x - (xOf(props.loopA) - HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'a' }
@@ -461,6 +522,7 @@ function applyDrag(x: number) {
     if (drag.moved) emit('seek', clampTime(drag.fromPosition - travelled * secondsPerPixel.value))
     return
   }
+  if (drag.kind === 'selectLoop') return emit('selectLoop', drag.index) // a press, not a drag
   const seconds = clampTime(timeOf(x))
   if (drag.kind === 'seek') emit('seek', seconds)
   if (drag.kind === 'marker') emit('moveMarker', drag.index, seconds)

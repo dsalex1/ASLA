@@ -32,6 +32,7 @@ function recordingContext() {
     Object.assign(ctx, { [method]: record(method) })
   // colour matters for these three, so capture the style that was active
   Object.assign(ctx, {
+    measureText: (text: string) => ({ width: text.length * 6 }), // 6px a character, near enough
     fillRect: (...a: unknown[]) => void calls.push(['fillRect', ...a, ctx.fillStyle]),
     stroke: () => void calls.push(['stroke', ctx.strokeStyle, ctx.lineWidth]),
     fill: () => void calls.push(['fill', ctx.fillStyle]),
@@ -144,6 +145,32 @@ describe('WaveformCanvas drawing', () => {
     expect(callsOf('clip')).toHaveLength(1)
   })
 
+  describe('the loop list on the overview', () => {
+    const loops = [{ a: 2, b: 4, name: 'Chorus' }, { a: 6, b: 8 }]
+    // the A and B handle boxes draw text too, and are not part of the list
+    const badgeLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => l !== 'A' && l !== 'B')
+
+    it('names each loop, falling back to its number, and marks the selected one', async () => {
+      await render({ overview: true, loops, selectedLoop: 0, loopA: 2, loopB: 4 })
+      expect(badgeLabels()).toEqual(['Chorus', '2'])
+      // the selected pill is orange, the other one grey. The pills are the last two fills
+      // in those colours; the orange before them is the wave clipped to the selected region.
+      const pills = callsOf('fill').filter((c) => c[1] === '#f59e0b' || c[1] === '#8b8b8b')
+      expect(pills.slice(-2).map((c) => c[1])).toEqual(['#f59e0b', '#8b8b8b'])
+    })
+
+    it('shows the loops that are not selected as faint blocks', async () => {
+      await render({ overview: true, loops, selectedLoop: 0, loopA: 2, loopB: 4 })
+      const faint = callsOf('fillRect').filter((c) => c[5] === 'rgba(160, 160, 160, 0.22)')
+      expect(faint.map((c) => c.slice(1, 3))).toEqual([[600, 0]]) // only the second loop
+    })
+
+    it('leaves the zoomed view alone', async () => {
+      await render({ loops, selectedLoop: 0 })
+      expect(badgeLabels()).not.toContain('Chorus')
+    })
+  })
+
   it('numbers markers in order and skips ones scrolled out of view', async () => {
     await render({ markers: [1, 5], start: 4, end: 10 })
     expect(markerLabels()).toEqual(['2']) // marker 1 is left of the window
@@ -252,6 +279,17 @@ describe('WaveformCanvas interaction', () => {
     expect(wrapper.emitted('zoom')![0][0] as number).toBeCloseTo(10 / 1.2, 3)
     await wrapper.find('.waveform').trigger('wheel', { deltaY: 100 })
     expect(wrapper.emitted('zoom')![1][0] as number).toBeCloseTo(10 * 1.2, 3)
+  })
+
+  it('selects a loop when its name pill is pressed, and seeks anywhere else', async () => {
+    const props = { overview: true, loops: [{ a: 2, b: 4, name: 'Chorus' }], selectedLoop: 0 }
+    const wrapper = await render(props)
+    await down(wrapper, 210, 8) // the pill sits at x 201.., y 1..17
+    expect(wrapper.emitted('selectLoop')![0]).toEqual([0])
+    expect(wrapper.emitted('seek')).toBeUndefined()
+
+    await down(wrapper, 210, 100) // the same column, below the pill
+    expect(wrapper.emitted('seek')![0]).toEqual([2.1])
   })
 
   it('ignores the wheel on the overview strip', async () => {

@@ -353,11 +353,20 @@ export function useAudioEngine() {
   const positionNow = () =>
     baseTrackTime + Math.max(0, audioContext().currentTime - baseContextTime - engineLag()) * tempo.value
 
+  /**
+   * How far ahead of the playhead an A-B wrap has to be scheduled, in track seconds.
+   * Stopping a source cannot un-render what the stretcher is already holding, so at unity
+   * this is nothing and off it the wrap has to be asked for a stretcher's worth early or
+   * it lands that late. Capped at half the loop, so a selection shorter than the buffer
+   * cannot re-trigger on every frame.
+   */
+  const wrapLead = () => Math.min(engineLag() * tempo.value, (loopB.value! - loopA.value!) / 2)
+
   function tick() {
     if (!playing.value) return
     const at = positionNow()
     // A-B repeat: jump back as soon as the playhead runs past B
-    if (looping() && at >= loopB.value!) seek(loopA.value!)
+    if (looping() && at + wrapLead() >= loopB.value!) seek(loopA.value!)
     else if (at >= duration.value) (currentTime.value = duration.value), pause()
     else currentTime.value = at
     frame = requestAnimationFrame(tick)
