@@ -446,6 +446,13 @@ describe('AudioPane skip markers', () => {
     await wrapper.vm.$nextTick()
   }
 
+  it('skips from one it is already standing on, so a skip at the start works', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 0, skip: true }, { at: 30 }] })])
+    engine.playing.value = true
+    await playTo(wrapper, 0, 0.1)
+    expect(engine.seek).toHaveBeenLastCalledWith(30)
+  })
+
   it('plays on from the next marker when it reaches one', async () => {
     const wrapper = await mountPane([track({ markers: [{ at: 10 }, { at: 20, skip: true }, { at: 30 }] })])
     engine.playing.value = true
@@ -477,14 +484,14 @@ describe('AudioPane count-in', () => {
 
   it('offers the three settings, counting off four beats at the song tempo', async () => {
     const wrapper = await open(await mountPane())
-    expect((field(wrapper, 'Count-in on').element as HTMLInputElement).checked).toBe(false)
+    expect(button(wrapper, 'Count-in on').text()).toBe('Off')
     expect((field(wrapper, 'Count-in tempo').element as HTMLInputElement).value).toBe('120') // the song's own bpm
     expect((field(wrapper, 'Count-in beats').element as HTMLInputElement).value).toBe('4')
   })
 
   it('saves each of them to the song', async () => {
     const wrapper = await open(await mountPane())
-    await field(wrapper, 'Count-in on').setValue(true)
+    await button(wrapper, 'Count-in on').trigger('click')
     expect(vi.mocked(updateDoc).mock.calls.at(-1)![1]).toEqual({ countIn: { enabled: true, bpm: 120, beats: 4 } })
 
     await field(wrapper, 'Count-in beats').setValue('3')

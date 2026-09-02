@@ -223,7 +223,7 @@ function afterSkip(from: number): number {
 
 watch(currentTime, (now, before) => {
   if (!playing.value || now <= before) return // a wrap or a seek is not playing into one
-  const crossed = markers.value.find((m) => m.skip && m.at > before && m.at <= now)
+  const crossed = markers.value.find((m) => m.skip && m.at >= before && m.at <= now)
   if (crossed) engine.seek(afterSkip(crossed.at))
 })
 
@@ -720,18 +720,20 @@ defineExpose({ position: currentTime })
             :title="countInOn ? `${countInBeats} beats at ${countInBpm} bpm` : 'No count-in'"
             @click="countInOpen = !countInOpen"
           >
-            <i class="fas fa-hourglass-start" />
+            <i class="fas fa-stopwatch-20" />
           </button>
           <div v-if="countInOpen" class="count-in-popover">
-            <label class="count-in-row">
+            <div class="count-in-row">
               <span>Count in</span>
-              <input
-                type="checkbox"
-                :checked="countInOn"
+              <button
+                class="tbtn"
+                :class="{ 'tbtn--on': countInOn }"
                 aria-label="Count-in on"
-                @change="saveCountIn({ enabled: ($event.target as HTMLInputElement).checked })"
-              />
-            </label>
+                @click="saveCountIn({ enabled: !countInOn })"
+              >
+                {{ countInOn ? 'On' : 'Off' }}
+              </button>
+            </div>
             <label class="count-in-row">
               <span>Tempo</span>
               <input
@@ -974,6 +976,11 @@ defineExpose({ position: currentTime })
   color: #eee;
   text-align: right;
 }
+/* the icons in it label their words, so they need the room a gap gives them */
+.marker-menu .tbtn {
+  gap: 6px;
+}
+
 /* over the flag it was opened on, just under the row of flags */
 .marker-menu {
   position: absolute;
