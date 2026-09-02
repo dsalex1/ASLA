@@ -15,10 +15,9 @@ const props = withDefaults(
     loopB?: number | null
     /** the loop repeats; when it does not, the region is still shown but greyed out */
     loopActive?: boolean
-    /** every loop on the track. The overview shows them all, each with a tappable name
-     * badge, so the whole set is visible and switching between them costs one press. */
+    /** the saved loops on the track. Each is drawn as a pair of flags facing inward, and
+     * pressing either one is what puts the A-B back on that loop. */
     loops?: Loop[]
-    selectedLoop?: number
     position: number
     /** the compact whole-track strip: no flags to grab, tap anywhere to seek */
     overview?: boolean
@@ -37,7 +36,7 @@ const props = withDefaults(
      * flattened against the edge */
     headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, loopActive: true, loops: () => [], selectedLoop: 0, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
+  { loopA: null, loopB: null, loopActive: true, loops: () => [], ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
 )
 
 const emit = defineEmits<{
@@ -81,9 +80,11 @@ const loopColor = computed(() => (props.loopActive ? COLORS.loop : COLORS.loopOf
 
 const FLAG_W = 26
 const FLAG_H = 26
+const FLAG_FONT = 'bold 14px sans-serif'
 const HANDLE_W = 30
 const HANDLE_H = 60
-const BADGE_H = 16 // the loop name pill on the overview; also its hit target
+const FLAG_TOP = 4
+const LOOP_TOP = FLAG_TOP + FLAG_H // the loops hang in a second row, clear of the markers
 
 const wrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -174,8 +175,21 @@ function drawTimeGrid(ctx: CanvasRenderingContext2D) {
   }
 }
 
-function drawFlag(ctx: CanvasRenderingContext2D, x: number, label: string, inLoop: boolean) {
-  const color = inLoop ? loopColor.value : COLORS.marker
+/**
+ * A full-height line with a pennant hanging off it. `direction` is the side the pennant
+ * opens to: a loop's two flags face each other, so the pair brackets what it repeats.
+ */
+function drawFlag(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  label: string,
+  color: string,
+  direction: 1 | -1 = 1,
+  top = FLAG_TOP,
+  w = FLAG_W
+) {
+  const tip = x + direction * w
+  const middle = x + direction * (w / 2)
   ctx.strokeStyle = color
   ctx.lineWidth = 1
   ctx.beginPath()
@@ -185,19 +199,19 @@ function drawFlag(ctx: CanvasRenderingContext2D, x: number, label: string, inLoo
 
   ctx.fillStyle = color
   ctx.beginPath()
-  ctx.moveTo(x, 4)
-  ctx.lineTo(x + FLAG_W, 4)
-  ctx.lineTo(x + FLAG_W, 4 + FLAG_H)
-  ctx.lineTo(x + FLAG_W / 2, 4 + FLAG_H * 0.72)
-  ctx.lineTo(x, 4 + FLAG_H)
+  ctx.moveTo(x, top)
+  ctx.lineTo(tip, top)
+  ctx.lineTo(tip, top + FLAG_H)
+  ctx.lineTo(middle, top + FLAG_H * 0.72)
+  ctx.lineTo(x, top + FLAG_H)
   ctx.closePath()
   ctx.fill()
 
   ctx.fillStyle = '#fff'
-  ctx.font = 'bold 14px sans-serif'
+  ctx.font = FLAG_FONT
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText(label, x + FLAG_W / 2, 4 + FLAG_H * 0.42)
+  ctx.fillText(label, middle, top + FLAG_H * 0.42)
 }
 
 function drawHandle(ctx: CanvasRenderingContext2D, x: number, label: 'A' | 'B') {
@@ -363,10 +377,6 @@ function draw() {
     drawDbGrid(ctx)
   }
 
-  // every other loop on the track, so the whole set is visible at a glance; the selected
-  // one is drawn below with its handles and does not want drawing twice
-  if (props.overview) drawOtherLoops(ctx)
-
   // A-B repeat region, drawn over the wave so the looped part reads as one block
   const { loopA, loopB } = props
   if (loopA != null && loopB != null) {
@@ -391,10 +401,10 @@ function draw() {
   props.markers.forEach((seconds, i) => {
     const x = xOf(seconds)
     if (x < -FLAG_W || x > width.value) return
-    drawFlag(ctx, x, String(i + 1), isLoopBoundary(seconds))
+    drawFlag(ctx, x, String(i + 1), isLoopBoundary(seconds) ? loopColor.value : COLORS.marker)
   })
 
-  if (props.overview) drawLoopBadges(ctx)
+  drawLoops(ctx)
 
   if (loopA != null) drawHandle(ctx, xOf(loopA), 'A')
   if (loopB != null) drawHandle(ctx, xOf(loopB), 'B')
@@ -408,46 +418,36 @@ function draw() {
   ctx.stroke()
 }
 
-/** the loops that are not the selected one, as faint blocks behind it */
-function drawOtherLoops(ctx: CanvasRenderingContext2D) {
-  ctx.fillStyle = COLORS.loopOffFill
-  props.loops.forEach((loop, i) => {
-    if (i === props.selectedLoop || loop.a == null || loop.b == null) return
-    ctx.fillRect(xOf(loop.a), 0, xOf(loop.b) - xOf(loop.a), height.value)
-  })
-}
-
 const loopLabel = (loop: Loop, index: number) => loop.name || String(index + 1)
 
 /**
- * A name pill at the left edge of each loop. It is the only part of the overview that is
- * not a seek, which is what lets the strip stay "tap anywhere to jump" while still being
- * the loop list: the pill is a precise, phone-sized target and everything around it seeks.
+ * Every saved loop, as a pair of flags carrying its name. They are the loop list as well
+ * as the picture of it: pressing either flag is what puts the A-B back on that loop.
  */
-let badges: { x: number; width: number; index: number }[] = []
+let loopFlags: { x: number; width: number; index: number }[] = []
 
-function drawLoopBadges(ctx: CanvasRenderingContext2D) {
-  badges = []
-  ctx.font = 'bold 10px sans-serif'
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'middle'
+function drawLoops(ctx: CanvasRenderingContext2D) {
+  loopFlags = []
   props.loops.forEach((loop, i) => {
-    const at = loop.a ?? loop.b
-    if (at == null) return
     const label = loopLabel(loop, i)
-    const box = ctx.measureText(label).width + 12
-    // kept on screen, so a loop that starts off the left edge still shows its name
-    const x = Math.max(1, Math.min(xOf(at) + 1, width.value - box - 1))
-    const chosen = i === props.selectedLoop
-    ctx.fillStyle = chosen ? loopColor.value : COLORS.loopOff
-    ctx.beginPath()
-    ctx.roundRect(x, 1, box, BADGE_H, 4)
-    ctx.fill()
-    ctx.fillStyle = chosen ? '#1a1a1a' : '#0d0d0d'
-    ctx.fillText(label, x + 6, 1 + BADGE_H / 2)
-    badges.push({ x, width: box, index: i })
+    ctx.font = FLAG_FONT
+    const w = Math.max(FLAG_W, ctx.measureText(label).width + 12)
+    for (const [at, direction] of [
+      [loop.a, 1],
+      [loop.b, -1],
+    ] as const) {
+      const x = xOf(at)
+      const left = direction > 0 ? x : x - w
+      if (left > width.value || left + w < 0) continue
+      drawFlag(ctx, x, label, COLORS.loop, direction, LOOP_TOP, w)
+      loopFlags.push({ x: left, width: w, index: i })
+    }
   })
 }
+
+/** the loop flag under a press, if that is what was pressed */
+const loopFlagAt = (x: number, y: number) =>
+  y >= LOOP_TOP && y <= LOOP_TOP + FLAG_H ? loopFlags.find((f) => x >= f.x && x <= f.x + f.width) : undefined
 
 /** markers sitting on an A-B bound (or inside the loop) turn orange */
 function isLoopBoundary(seconds: number) {
@@ -470,7 +470,7 @@ function scheduleDraw() {
 onMounted(draw)
 
 watch(
-  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.loopActive, props.loops, props.selectedLoop, props.position, props.monitor, props.ceilingDb, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
+  () => [props.peaks, props.start, props.end, props.markers, props.loopA, props.loopB, props.loopActive, props.loops, props.position, props.monitor, props.ceilingDb, props.gainDb, props.outTrail, props.reductionTrail, props.headroomDb, width.value, height.value],
   scheduleDraw,
   { immediate: true, deep: true }
 )
@@ -501,19 +501,15 @@ function localX(e: PointerEvent) {
 }
 
 function hitTest(x: number, y: number): Drag {
-  if (props.overview) {
-    if (y <= BADGE_H + 2) {
-      const badge = badges.find((b) => x >= b.x && x <= b.x + b.width)
-      if (badge) return { kind: 'selectLoop', index: badge.index }
-    }
-    return { kind: 'seek' }
-  }
+  const loop = loopFlagAt(x, y)
+  if (loop) return { kind: 'selectLoop', index: loop.index }
+  if (props.overview) return { kind: 'seek' }
   const handleTop = height.value * 0.55 - HANDLE_H / 2
   if (y >= handleTop && y <= handleTop + HANDLE_H) {
     if (props.loopA != null && Math.abs(x - (xOf(props.loopA) - HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'a' }
     if (props.loopB != null && Math.abs(x - (xOf(props.loopB) + HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'b' }
   }
-  if (y <= 4 + FLAG_H) {
+  if (y <= FLAG_TOP + FLAG_H) {
     const index = props.markers.findIndex((m) => x >= xOf(m) && x <= xOf(m) + FLAG_W)
     if (index >= 0) return { kind: 'marker', index, fromX: x, armed: false }
   }

@@ -51,10 +51,10 @@ export type TrackAnalysis = {
   tuning?: number
 }
 
-/** One A-B selection. Either bound may still be missing while it is being set. */
+/** One saved A-B selection. Both bounds are set: it is made from an A-B that had both. */
 export type Loop = {
-  a?: number
-  b?: number
+  a: number
+  b: number
   /** what it was called; an unnamed loop is shown by its position in the list */
   name?: string
 }
@@ -66,10 +66,10 @@ export type AudioTrack = {
   duration: number
   /** marker positions in seconds, kept sorted; displayed numbered 1..n */
   markers: number[]
-  /** the A-B selections on this track; `selectedLoop` is the one the transport repeats */
+  /** the saved A-B selections on this track; the live A-B is not stored */
   loops?: Loop[]
+  /** @deprecated fields an older shape wrote; read once, then dropped on the next write */
   selectedLoop?: number
-  /** @deprecated the single A-B this replaced; read once and migrated into `loops` */
   loopA?: number
   loopB?: number
   tempo?: number // playback rate, 1 = original

@@ -55,10 +55,19 @@ const mixerAnchor = ref<HTMLElement | null>(null)
 onClickOutside(mixerAnchor, () => (mixerOpen.value = false))
 const job = computed(() => track.value?.stemJob)
 const markers = ref<number[]>([])
-// The A-B selections on this track. The list is the state; the engine is only ever told
-// about the selected one, which is what it repeats.
-const loops = ref<Loop[]>([])
-const selectedLoop = ref(0)
+// The saved selections on this track, read straight off the song: saving one on a phone
+// puts it on every other device. The live A-B is the engine's and is not one of them, so
+// dragging A about does not rewrite what was saved.
+const loops = computed((): Loop[] => {
+  const current = track.value
+  if (current?.loops?.length) return current.loops
+  // a track saved before there were several loops carries the one A-B it had
+  if (current?.loopA != null && current.loopB != null) return [{ a: current.loopA, b: current.loopB }]
+  return []
+})
+// a saved loop is "selected" while the A-B stands on it, which is what the name field and
+// the delete button act on; nudging either bound simply steps off it
+const selectedLoop = computed(() => loops.value.findIndex((l) => l.a === loopA.value && l.b === loopB.value))
 const currentLoop = computed((): Loop | undefined => loops.value[selectedLoop.value])
 const hasAudio = computed(() => !!track.value)
 // the stored duration stands in until the file has decoded, so the whole track can be
@@ -87,13 +96,7 @@ watch(
     const current = track.value
     if (!current) return
     markers.value = [...current.markers]
-    // a track saved before there were several loops carries the one A-B it had
-    loops.value = current.loops?.length
-      ? current.loops.map((l) => ({ ...l }))
-      : current.loopA != null || current.loopB != null
-        ? [{ a: current.loopA, b: current.loopB }]
-        : []
-    selectedLoop.value = Math.min(current.selectedLoop ?? 0, Math.max(loops.value.length - 1, 0))
+    loopA.value = loopB.value = null
     tempo.value = current.tempo ?? 1
     pitch.value = current.pitch ?? 0
     gainDb.value = current.gainDb ?? 0
@@ -105,31 +108,39 @@ watch(
   { immediate: true }
 )
 
-// --- persistence: markers, loop, tempo and pitch belong to the track ---
-const persist = useDebounceFn(() => {
+// --- persistence: markers, loops, tempo and pitch belong to the track ---
+/** write these fields of the selected track back to the song */
+function saveTrack(patch: Partial<AudioTrack>) {
   if (!props.song.id || !track.value) return
   const updated = tracks.value.map((t, i) => {
     if (i !== trackIndex.value) return t
-    const next: AudioTrack = {
-      ...t,
-      markers: markers.value,
-      tempo: tempo.value,
-      pitch: pitch.value,
-      gainDb: gainDb.value,
-      loops: loops.value.map((l) => ({ ...l })),
-      selectedLoop: selectedLoop.value,
-    }
-    // the mix belongs to the song, like the tempo: the band hears what was set up
-    if (t.stems?.length) next.stems = t.stems.map((s) => ({ ...s, volume: stemVolume.value[s.name] ?? s.volume }))
-    // Firestore rejects undefined, and the single A-B has been migrated into `loops`
+    const next: AudioTrack = { ...t, ...patch }
+    // Firestore rejects undefined, and what these held has been migrated into `loops`
     delete next.loopA
     delete next.loopB
+    delete next.selectedLoop
     return next
   })
   updateDoc(doc(songCollection, props.song.id), { audioTracks: updated, selectedAudioTrack: trackIndex.value })
+}
+
+// the knobs are turned continuously, so they are written once the hand comes off them
+const persist = useDebounceFn(() => {
+  const current = track.value
+  if (!current) return
+  saveTrack({
+    markers: markers.value,
+    tempo: tempo.value,
+    pitch: pitch.value,
+    gainDb: gainDb.value,
+    // the mix belongs to the song, like the tempo: the band hears what was set up
+    ...(current.stems?.length
+      ? { stems: current.stems.map((s) => ({ ...s, volume: stemVolume.value[s.name] ?? s.volume })) }
+      : {}),
+  })
 }, 500)
 
-watch([markers, loops, selectedLoop, tempo, pitch, gainDb, trackIndex, stemVolume], persist, { deep: true })
+watch([markers, tempo, pitch, gainDb, trackIndex, stemVolume], persist, { deep: true })
 
 // a split that finished elsewhere, or one this device just ran: pick the stems up
 watch(
@@ -169,11 +180,7 @@ function moveMarker(index: number, seconds: number) {
 
 /** Every loop bound is a place you want to get back to as much as any marker, so the
  *  step buttons walk them alongside the flags. */
-const jumpTargets = computed(() =>
-  [...markers.value, ...loops.value.flatMap((l) => [l.a, l.b])]
-    .filter((t): t is number => t != null)
-    .sort((a, b) => a - b)
-)
+const jumpTargets = computed(() => [...markers.value, ...loops.value.flatMap((l) => [l.a, l.b])].sort((a, b) => a - b))
 
 const jumpMarker = (direction: -1 | 1) => {
   const candidates = jumpTargets.value.filter((m) => (direction < 0 ? m < currentTime.value - 0.3 : m > currentTime.value))
@@ -182,57 +189,50 @@ const jumpMarker = (direction: -1 | 1) => {
 }
 
 // --- A-B repeat ---
-
-// the engine repeats one region at a time, so the selected loop is pushed into it and
-// nothing else writes those two refs
-watch(
-  [currentLoop, selectedLoop],
-  () => {
-    loopA.value = currentLoop.value?.a ?? null
-    loopB.value = currentLoop.value?.b ?? null
-  },
-  { deep: true, immediate: true }
-)
-
-/** the loop A and B write to, made on demand so a track with none behaves as it always did */
-function editing(): Loop {
-  if (!loops.value.length) {
-    loops.value = [{}]
-    selectedLoop.value = 0
-  }
-  return loops.value[selectedLoop.value]
-}
+// A and B are the engine's own and live only on this device: they are where you are
+// working right now. Pressing + is what turns one into a loop the whole band gets.
 
 function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   if (!Number.isFinite(seconds)) return
   const at = snap(seconds)
-  const loop = editing()
   if (which === 'a') {
-    loop.a = at
-    if (loop.b != null && loop.b <= at) delete loop.b
+    loopA.value = at
+    if (loopB.value != null && loopB.value <= at) loopB.value = null
   } else {
-    loop.b = at
-    if (loop.a != null && loop.a >= at) delete loop.a
+    loopB.value = at
+    if (loopA.value != null && loopA.value >= at) loopA.value = null
   }
 }
 
-/** Start another selection, empty, and make it the one A and B set. */
-function newLoop() {
-  loops.value = [...loops.value, {}]
-  selectedLoop.value = loops.value.length - 1
+/** the +: keep the A-B on screen as a loop. It comes back selected, being the one the A-B stands on. */
+function saveLoop() {
+  if (loopA.value == null || loopB.value == null) return
+  saveTrack({ loops: [...loops.value, { a: loopA.value, b: loopB.value }] })
 }
 
-const selectLoop = (index: number) => (selectedLoop.value = index)
+/** picked off the waveform: the A-B jumps to the saved loop, and nothing is written */
+function selectLoop(index: number) {
+  const loop = loops.value[index]
+  if (!loop) return
+  loopA.value = loop.a
+  loopB.value = loop.b
+}
+
+/** drop the saved loop the A-B stands on; the A-B itself stays where it is */
+function deleteLoop() {
+  if (selectedLoop.value < 0) return
+  saveTrack({ loops: loops.value.filter((_, i) => i !== selectedLoop.value) })
+}
 
 /** typed into the loop row; an empty name puts the loop back to being shown by number */
 const loopName = computed({
   get: () => currentLoop.value?.name ?? '',
   set: (value: string) => {
-    const loop = currentLoop.value
-    if (!loop) return
+    if (selectedLoop.value < 0) return
     const name = value.trim()
-    if (name) loop.name = name
-    else delete loop.name
+    saveTrack({
+      loops: loops.value.map((l, i) => (i === selectedLoop.value ? { a: l.a, b: l.b, ...(name ? { name } : {}) } : l)),
+    })
   },
 })
 
@@ -245,26 +245,22 @@ const hasLoop = computed(() => loopA.value != null && loopB.value != null)
 
 /** step the whole selection one selection-length forward or back, so you can walk the track */
 function stepLoop(direction: -1 | 1) {
-  const loop = currentLoop.value
-  if (loop?.a == null || loop.b == null) return
-  const length = loop.b - loop.a
-  const start = Math.max(0, Math.min(loop.a + direction * length, trackDuration.value - length))
-  loop.a = start
-  loop.b = start + length
+  if (loopA.value == null || loopB.value == null) return
+  const length = loopB.value - loopA.value
+  const start = Math.max(0, Math.min(loopA.value + direction * length, trackDuration.value - length))
+  loopA.value = start
+  loopB.value = start + length
 }
 
 /** halve or double the selection, keeping A where it is */
 function scaleLoop(factor: number) {
-  const loop = currentLoop.value
-  if (loop?.a == null || loop.b == null) return
-  loop.b = Math.min(trackDuration.value, loop.a + (loop.b - loop.a) * factor)
+  if (loopA.value == null || loopB.value == null) return
+  loopB.value = Math.min(trackDuration.value, loopA.value + (loopB.value - loopA.value) * factor)
 }
 
-/** the x: drop the loop on screen, and fall back to the one before it */
+/** the x: take the A-B off screen, leaving whatever was saved alone */
 function clearLoop() {
-  if (!loops.value.length) return
-  loops.value = loops.value.filter((_, i) => i !== selectedLoop.value)
-  selectedLoop.value = Math.max(0, Math.min(selectedLoop.value, loops.value.length - 1))
+  loopA.value = loopB.value = null
 }
 
 // --- transport ---
@@ -426,6 +422,7 @@ defineExpose({ position: currentTime })
         :start="windowStart"
         :end="windowEnd"
         :markers="markers"
+        :loops="loops"
         :loopA="loopA"
         :loopB="loopB"
         :loopActive="loopBarOpen"
@@ -440,6 +437,7 @@ defineExpose({ position: currentTime })
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
+        @selectLoop="selectLoop"
         @zoom="zoom"
       />
       <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane">
@@ -520,11 +518,10 @@ defineExpose({ position: currentTime })
         :start="0"
         :end="trackDuration"
         :markers="markers"
+        :loops="loops"
         :loopA="loopA"
         :loopB="loopB"
         :loopActive="loopBarOpen"
-        :loops="loops"
-        :selectedLoop="selectedLoop"
         :position="currentTime"
         @seek="engine.seek"
         @selectLoop="selectLoop"
@@ -542,14 +539,14 @@ defineExpose({ position: currentTime })
     <div v-if="hasAudio && loopBarOpen" class="controls loop-row">
       <div class="group">
         <button class="tbtn" :class="{ 'tbtn--on': loopA != null }" @click="setLoop('a')">A</button>
-        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop" @click="clearLoop">
+        <button class="tbtn" aria-label="Clear A-B" :disabled="loopA == null && loopB == null" @click="clearLoop">
           <i class="fas fa-times" />
         </button>
         <button class="tbtn" :class="{ 'tbtn--on': loopB != null }" @click="setLoop('b')">B</button>
       </div>
 
-      <!-- the list itself is the strip above; this names the one on screen and starts
-           another. The names show on the strip's pills, which is what selects them. -->
+      <!-- the list itself is the flags on the strips above, which are what select them;
+           this saves the A-B as another one, and names or drops the one it stands on -->
       <div class="group">
         <input
           v-model.lazy="loopName"
@@ -558,8 +555,17 @@ defineExpose({ position: currentTime })
           :placeholder="currentLoop ? `Loop ${selectedLoop + 1}` : 'No loop'"
           aria-label="Name this loop"
         />
-        <button class="tbtn" aria-label="New loop" title="Start another loop" @click="newLoop">
+        <button
+          class="tbtn"
+          aria-label="Save loop"
+          title="Save the A-B as a loop"
+          :disabled="!hasLoop || selectedLoop >= 0"
+          @click="saveLoop"
+        >
           <i class="fas fa-plus" />
+        </button>
+        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop" @click="deleteLoop">
+          <i class="fas fa-trash" />
         </button>
       </div>
 

@@ -88,6 +88,14 @@ const mountPane = async (tracks: AudioTrack[] = [track()]) => {
 const button = (wrapper: ReturnType<typeof mount>, label: string) =>
   wrapper.findAll('button').find((b) => b.attributes('aria-label') === label)!
 const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown as { markers: number[] }).markers
+/** the A-B belongs to the engine now, so a test that wants one just puts it there */
+const setAB = async (wrapper: ReturnType<typeof mount>, a: number | null, b: number | null) => {
+  engine.loopA.value = a
+  engine.loopB.value = b
+  await wrapper.vm.$nextTick()
+}
+const writtenTracks = () =>
+  (vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }).audioTracks
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -103,13 +111,14 @@ beforeEach(() => {
 describe('AudioPane track loading', () => {
   it('loads peaks and audio, and restores the saved settings', async () => {
     const { loadPeaks, audioBytes } = await import('@/helpers/audioTracks')
-    await mountPane([track({ markers: [5, 10], loopA: 5, loopB: 10, tempo: 0.8, pitch: -2 })])
+    await mountPane([track({ markers: [5, 10], loops: [{ a: 5, b: 10 }], tempo: 0.8, pitch: -2 })])
     expect(loadPeaks).toHaveBeenCalledOnce()
     // duration up front so the waveform is scrubbable while decoding
     expect(engine.load).toHaveBeenCalledWith(expect.any(Function), 100, [])
     await (engine.load as unknown as { mock: { calls: [() => Promise<ArrayBuffer>][] } }).mock.calls[0][0]()
     expect(audioBytes).toHaveBeenCalledOnce()
-    expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, 5, 10])
+    // the saved loop is on the track; the A-B starts empty and is put on one by hand
+    expect([engine.tempo.value, engine.pitch.value, engine.loopA.value, engine.loopB.value]).toEqual([0.8, -2, null, null])
   })
 
   describe('a song with no audio', () => {
@@ -302,55 +311,69 @@ describe('AudioPane A-B repeat', () => {
     expect([engine.loopA.value, engine.loopB.value]).toEqual([40, null])
   })
 
-  it('deleting the only loop leaves nothing repeating', async () => {
+  it('clearing takes the A-B off screen', async () => {
     const wrapper = await mountPane()
     engine.currentTime.value = 10
     await press(wrapper, 'A')
     engine.currentTime.value = 20
     await press(wrapper, 'B')
-    await button(wrapper, 'Delete this loop').trigger('click')
+    await button(wrapper, 'Clear A-B').trigger('click')
     expect([engine.loopA.value, engine.loopB.value]).toEqual([null, null])
   })
 })
 
-describe('AudioPane multiple loops', () => {
+describe('AudioPane saved loops', () => {
   const press = (wrapper: ReturnType<typeof mount>, label: 'A' | 'B') =>
     wrapper.findAll('button').find((b) => b.text().trim() === label)!.trigger('click')
 
   const overview = (wrapper: ReturnType<typeof mount>) => wrapper.findAllComponents(WaveformCanvas).at(-1)!
+  const nameField = (wrapper: ReturnType<typeof mount>) => wrapper.find('input.loop-name')
 
-  it('starts an empty loop and fills it, leaving the first one alone', async () => {
+  it('saves the A-B as another loop, straight onto the song', async () => {
     const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }] })])
-    await button(wrapper, 'New loop').trigger('click')
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([null, null])
-
     engine.currentTime.value = 40
     await press(wrapper, 'A')
     engine.currentTime.value = 50
     await press(wrapper, 'B')
-    expect(overview(wrapper).props('loops')).toEqual([{ a: 10, b: 20 }, { a: 40, b: 50 }])
-    expect(overview(wrapper).props('selectedLoop')).toBe(1)
+    await button(wrapper, 'Save loop').trigger('click')
+    expect(writtenTracks()[0].loops).toEqual([{ a: 10, b: 20 }, { a: 40, b: 50 }])
   })
 
-  it('plays whichever loop the overview selects', async () => {
-    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }], selectedLoop: 0 })])
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([10, 20])
+  it('counts the loop the A-B stands on as the selected one', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }] })])
+    expect(nameField(wrapper).attributes('disabled')).toBeDefined() // nothing selected yet
+    await setAB(wrapper, 40, 50)
+    expect(nameField(wrapper).attributes('placeholder')).toBe('Loop 2')
+    expect(button(wrapper, 'Save loop').attributes('disabled')).toBeDefined() // already saved
+  })
+
+  it('jumps the A-B to whichever loop the waveform selects', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }] })])
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([null, null])
     await overview(wrapper).vm.$emit('selectLoop', 1)
     await wrapper.vm.$nextTick()
     expect([engine.loopA.value, engine.loopB.value]).toEqual([40, 50])
   })
 
-  it('deleting falls back to the loop before it', async () => {
-    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }], selectedLoop: 1 })])
+  it('names the loop the A-B stands on', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }] })])
+    await setAB(wrapper, 10, 20)
+    await nameField(wrapper).setValue('Chorus')
+    await nameField(wrapper).trigger('change')
+    expect(writtenTracks()[0].loops).toEqual([{ a: 10, b: 20, name: 'Chorus' }])
+  })
+
+  it('deletes the loop the A-B stands on, leaving the A-B where it is', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }] })])
+    await setAB(wrapper, 40, 50)
     await button(wrapper, 'Delete this loop').trigger('click')
-    expect(overview(wrapper).props('loops')).toEqual([{ a: 10, b: 20 }])
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([10, 20])
+    expect(writtenTracks()[0].loops).toEqual([{ a: 10, b: 20 }])
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([40, 50])
   })
 
   it('reads a track saved with a single A-B as one loop', async () => {
     const wrapper = await mountPane([track({ loopA: 3, loopB: 7 })])
     expect(overview(wrapper).props('loops')).toEqual([{ a: 3, b: 7 }])
-    expect([engine.loopA.value, engine.loopB.value]).toEqual([3, 7])
   })
 
   it('steps between every loop bound as well as the markers', async () => {
@@ -360,17 +383,6 @@ describe('AudioPane multiple loops', () => {
       await button(wrapper, 'Next marker').trigger('click')
       expect(engine.seek).toHaveBeenLastCalledWith(expected)
     }
-  })
-
-  it('writes the loops and the selection back to the track', async () => {
-    vi.useFakeTimers()
-    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }] })])
-    await button(wrapper, 'New loop').trigger('click')
-    await vi.advanceTimersByTimeAsync(600)
-    vi.useRealTimers()
-
-    const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
-    expect(written.audioTracks[0]).toMatchObject({ loops: [{ a: 10, b: 20 }, {}], selectedLoop: 1 })
   })
 })
 
@@ -460,16 +472,15 @@ describe('AudioPane persistence', () => {
     expect(written.audioTracks[1].name).toBe('Live') // other tracks untouched
   })
 
-  it('leaves a cleared A-B out of the document entirely', async () => {
+  it('drops the fields the older shape wrote', async () => {
     vi.useFakeTimers()
-    const wrapper = await mountPane([track({ loopA: 1, loopB: 2 })])
-    await button(wrapper, 'Delete this loop').trigger('click')
+    const wrapper = await mountPane([track({ loopA: 1, loopB: 2, selectedLoop: 0 })])
+    engine.currentTime.value = 5
+    await button(wrapper, 'Add marker').trigger('click')
     await vi.advanceTimersByTimeAsync(600)
     vi.useRealTimers()
 
-    const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
-    expect(written.audioTracks[0]).not.toHaveProperty('loopA')
-    expect(written.audioTracks[0]).not.toHaveProperty('loopB')
+    for (const gone of ['loopA', 'loopB', 'selectedLoop']) expect(writtenTracks()[0]).not.toHaveProperty(gone)
   })
 })
 
@@ -481,7 +492,8 @@ describe('AudioPane A-B move', () => {
   }
 
   it('steps the selection forward and back by its own length', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    const wrapper = await mountPane()
+    await setAB(wrapper, 10, 20)
     await button(wrapper, 'Step forward one selection').trigger('click')
     expectLoop(20, 30)
     await button(wrapper, 'Step back one selection').trigger('click')
@@ -490,7 +502,8 @@ describe('AudioPane A-B move', () => {
   })
 
   it('halves and doubles the selection from A', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 20 })])
+    const wrapper = await mountPane()
+    await setAB(wrapper, 10, 20)
     await button(wrapper, 'Halve selection').trigger('click')
     expect(loop()).toEqual([10, 15])
     await button(wrapper, 'Double selection').trigger('click')
@@ -498,7 +511,8 @@ describe('AudioPane A-B move', () => {
   })
 
   it('clamps the selection to the track, keeping its length', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 90, duration: 100 })])
+    const wrapper = await mountPane()
+    await setAB(wrapper, 10, 90)
     await button(wrapper, 'Double selection').trigger('click')
     expect(loop()).toEqual([10, 100])
 
@@ -657,7 +671,8 @@ describe('AudioPane loop row', () => {
 
 describe('AudioPane loop stepping', () => {
   it('steps by the current selection length, so halving halves the step', async () => {
-    const wrapper = await mountPane([track({ loopA: 10, loopB: 30 })])
+    const wrapper = await mountPane()
+    await setAB(wrapper, 10, 30)
     await button(wrapper, 'Step forward one selection').trigger('click')
     expect(engine.loopA.value).toBeCloseTo(30, 5)
     expect(engine.loopB.value).toBeCloseTo(50, 5)
@@ -669,7 +684,8 @@ describe('AudioPane loop stepping', () => {
   })
 
   it('does not move anything when there is no selection', async () => {
-    const wrapper = await mountPane([track({ loopA: 5 })])
+    const wrapper = await mountPane()
+    await setAB(wrapper, 5, null)
     expect(button(wrapper, 'Step forward one selection').attributes('disabled')).toBeDefined()
   })
 })

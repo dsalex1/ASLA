@@ -145,29 +145,27 @@ describe('WaveformCanvas drawing', () => {
     expect(callsOf('clip')).toHaveLength(1)
   })
 
-  describe('the loop list on the overview', () => {
+  describe('the saved loops', () => {
     const loops = [{ a: 2, b: 4, name: 'Chorus' }, { a: 6, b: 8 }]
     // the A and B handle boxes draw text too, and are not part of the list
-    const badgeLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => l !== 'A' && l !== 'B')
+    const loopLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => l !== 'A' && l !== 'B')
 
-    it('names each loop, falling back to its number, and marks the selected one', async () => {
-      await render({ overview: true, loops, selectedLoop: 0, loopA: 2, loopB: 4 })
-      expect(badgeLabels()).toEqual(['Chorus', '2'])
-      // the selected pill is orange, the other one grey. The pills are the last two fills
-      // in those colours; the orange before them is the wave clipped to the selected region.
-      const pills = callsOf('fill').filter((c) => c[1] === '#f59e0b' || c[1] === '#8b8b8b')
-      expect(pills.slice(-2).map((c) => c[1])).toEqual(['#f59e0b', '#8b8b8b'])
+    it('flags both ends of every loop, named, falling back to its number', async () => {
+      await render({ overview: true, loops })
+      expect(loopLabels()).toEqual(['Chorus', 'Chorus', '2', '2'])
     })
 
-    it('shows the loops that are not selected as faint blocks', async () => {
-      await render({ overview: true, loops, selectedLoop: 0, loopA: 2, loopB: 4 })
-      const faint = callsOf('fillRect').filter((c) => c[5] === 'rgba(160, 160, 160, 0.22)')
-      expect(faint.map((c) => c.slice(1, 3))).toEqual([[600, 0]]) // only the second loop
+    it('faces the two flags of a loop inward, in the loop colour', async () => {
+      await render({ overview: true, loops: [loops[0]] })
+      // 'Chorus' measures 36, so the flag is 48 wide: it opens right from 2s and left from 4s
+      const label = callsOf('fillText').filter((c) => c[1] === 'Chorus')
+      expect(label.map((c) => c[2])).toEqual([224, 376])
+      expect(callsOf('fill').filter((c) => c[1] === '#f59e0b')).toHaveLength(2)
     })
 
-    it('leaves the zoomed view alone', async () => {
-      await render({ loops, selectedLoop: 0 })
-      expect(badgeLabels()).not.toContain('Chorus')
+    it('shows them on the zoomed view as well', async () => {
+      await render({ loops })
+      expect(loopLabels()).toContain('Chorus')
     })
   })
 
@@ -310,14 +308,16 @@ describe('WaveformCanvas interaction', () => {
     expect(wrapper.emitted('zoom')![1][0] as number).toBeCloseTo(10 * 1.2, 3)
   })
 
-  it('selects a loop when its name pill is pressed, and seeks anywhere else', async () => {
-    const props = { overview: true, loops: [{ a: 2, b: 4, name: 'Chorus' }], selectedLoop: 0 }
-    const wrapper = await render(props)
-    await down(wrapper, 210, 8) // the pill sits at x 201.., y 1..17
+  it('selects a loop when one of its flags is pressed, and seeks anywhere else', async () => {
+    const wrapper = await render({ overview: true, loops: [{ a: 2, b: 4, name: 'Chorus' }] })
+    await down(wrapper, 210, 40) // the start flag sits at x 200..248, y 30..56
     expect(wrapper.emitted('selectLoop')![0]).toEqual([0])
     expect(wrapper.emitted('seek')).toBeUndefined()
 
-    await down(wrapper, 210, 100) // the same column, below the pill
+    await down(wrapper, 390, 40) // the end flag opens the other way, x 352..400
+    expect(wrapper.emitted('selectLoop')![1]).toEqual([0])
+
+    await down(wrapper, 210, 100) // the same column, below the flags
     expect(wrapper.emitted('seek')![0]).toEqual([2.1])
   })
 
