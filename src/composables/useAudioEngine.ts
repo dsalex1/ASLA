@@ -36,6 +36,11 @@ export function useAudioEngine() {
   const gainDb = ref(0)
   /** A-B only repeats while the loop controls are on screen */
   const loopEnabled = ref(true)
+  /** clicks counted off before the track comes in; 0 turns the count-in off */
+  const countInBeats = ref(0)
+  const countInBpm = ref(120)
+  /** true while those clicks are running: pressing pause then calls the count off */
+  const countingIn = ref(false)
 
   // --- stems ---------------------------------------------------------------------------
   // A split track gets a source and a GainNode per stem and the graph sums them, so moving
@@ -362,6 +367,56 @@ export function useAudioEngine() {
    */
   const wrapLead = () => Math.min(engineLag() * tempo.value, (loopB.value! - loopA.value!) / 2)
 
+  // --- count-in ------------------------------------------------------------------------
+  // One oscillator per beat, all scheduled up front on the audio clock, so the count is
+  // as steady as the track that follows it and no JS timer can drift it.
+  let clicks: OscillatorNode[] = []
+  let countCalledOff = false
+
+  function scheduleClick(at: number, accent: boolean) {
+    const ctx = audioContext()
+    const osc = ctx.createOscillator()
+    const env = ctx.createGain()
+    osc.frequency.value = accent ? 1500 : 1000
+    env.gain.setValueAtTime(0.6, at)
+    env.gain.exponentialRampToValueAtTime(0.001, at + 0.05)
+    osc.connect(env).connect(ctx.destination)
+    osc.start(at)
+    osc.stop(at + 0.05)
+    clicks.push(osc)
+  }
+
+  function stopClicks() {
+    for (const c of clicks) {
+      try {
+        c.stop()
+      } catch {
+        /* already finished */
+      }
+      c.disconnect()
+    }
+    clicks = []
+  }
+
+  /** count the beats off, and say whether they ran to the end rather than being called off */
+  function countOff() {
+    const ctx = audioContext()
+    const interval = 60 / Math.max(countInBpm.value, 1)
+    const first = ctx.currentTime + 0.1 // room to schedule before the first beat is due
+    for (let beat = 0; beat < countInBeats.value; beat++) scheduleClick(first + beat * interval, beat === 0)
+    countingIn.value = true
+    countCalledOff = false
+    return new Promise<boolean>((resolve) =>
+      setTimeout(
+        () => {
+          countingIn.value = false
+          resolve(!countCalledOff)
+        },
+        (first + countInBeats.value * interval - ctx.currentTime) * 1000
+      )
+    )
+  }
+
   function tick() {
     if (!playing.value) return
     const at = positionNow()
@@ -378,6 +433,7 @@ export function useAudioEngine() {
     if (!mix) buildGraph()
     await route()
     if (looping() && (currentTime.value < loopA.value! || currentTime.value >= loopB.value!)) seek(loopA.value!)
+    if (countInBeats.value > 0 && !(await countOff())) return // pause was pressed over the count
     startSources(currentTime.value)
     rebase()
     playing.value = true
@@ -385,6 +441,11 @@ export function useAudioEngine() {
   }
 
   function pause() {
+    if (countingIn.value) {
+      countCalledOff = true
+      countingIn.value = false
+      stopClicks()
+    }
     // frames stop while the page is hidden, so take the position from the clock rather
     // than trusting whatever the last frame wrote
     if (playing.value) currentTime.value = Math.max(0, Math.min(positionNow(), duration.value))
@@ -394,7 +455,7 @@ export function useAudioEngine() {
     frame = null
   }
 
-  const toggle = () => (playing.value ? pause() : play())
+  const toggle = () => (playing.value || countingIn.value ? pause() : play())
 
   const looping = () => loopEnabled.value && loopA.value != null && loopB.value != null
 
@@ -467,7 +528,8 @@ export function useAudioEngine() {
 
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
-    loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
+    loopA, loopB, loopEnabled, limiterCeilingDb, countInBeats, countInBpm, countingIn,
+    load, play, pause, toggle, seek, skip, levels,
     stemNames, stemVolume, stemPeaks, setStemVolume, toggleStemMute,
   }
 }

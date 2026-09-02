@@ -2,7 +2,7 @@ import AudioPane from '@/components/AudioPane.vue'
 import JogStrip from '@/components/JogStrip.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { shownView } from '@/helpers/paneViews'
-import { AudioTrack, PaneView, Song } from '@/types'
+import { AudioTrack, Marker, PaneView, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,9 @@ const engine = {
   loopA: ref<number | null>(null),
   loopB: ref<number | null>(null),
   loopEnabled: ref(true),
+  countInBeats: ref(0),
+  countInBpm: ref(120),
+  countingIn: ref(false),
   limiterCeilingDb: ref<number | null>(null),
   load: vi.fn(() => Promise.resolve()),
   play: vi.fn(),
@@ -78,16 +81,17 @@ const paneProps = (s: Song, over: { hasPrev?: boolean; hasNext?: boolean; view?:
   return { song: s, hasPrev: false, hasNext: false, ...over, view, available, shown: over.shown ?? shownView(view, available) }
 }
 
-const mountPane = async (tracks: AudioTrack[] = [track()]) => {
+const mountPane = async (tracks: AudioTrack[] = [track()], over: Partial<Song> = {}) => {
   localStorage.setItem('audio.loopBar', 'true') // most tests want the loop row in reach
-  const wrapper = mount(AudioPane, { props: paneProps(song(tracks)) })
+  const wrapper = mount(AudioPane, { props: paneProps(song(tracks, over)) })
   await flushPromises()
   return wrapper
 }
 
 const button = (wrapper: ReturnType<typeof mount>, label: string) =>
   wrapper.findAll('button').find((b) => b.attributes('aria-label') === label)!
-const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown as { markers: number[] }).markers
+const markersOf = (wrapper: ReturnType<typeof mount>) => (wrapper.vm as unknown as { markers: Marker[] }).markers
+const atsOf = (wrapper: ReturnType<typeof mount>) => markersOf(wrapper).map((m) => m.at)
 /** the A-B belongs to the engine now, so a test that wants one just puts it there */
 const setAB = async (wrapper: ReturnType<typeof mount>, a: number | null, b: number | null) => {
   engine.loopA.value = a
@@ -106,6 +110,8 @@ beforeEach(() => {
   engine.loopA.value = null
   engine.loopB.value = null
   engine.gainDb.value = 0
+  engine.playing.value = false
+  engine.countingIn.value = false
 })
 
 describe('AudioPane track loading', () => {
@@ -228,7 +234,7 @@ describe('AudioPane markers', () => {
     const wrapper = await mountPane([track({ markers: [20] })])
     engine.currentTime.value = 5
     await button(wrapper, 'Add marker').trigger('click')
-    expect(markersOf(wrapper)).toEqual([5, 20])
+    expect(atsOf(wrapper)).toEqual([5, 20])
   })
 
   it('removes the marker instead when the playhead is on one', async () => {
@@ -236,7 +242,7 @@ describe('AudioPane markers', () => {
     engine.currentTime.value = 5.2
     await wrapper.vm.$nextTick()
     await button(wrapper, 'Remove marker').trigger('click')
-    expect(markersOf(wrapper)).toEqual([20])
+    expect(atsOf(wrapper)).toEqual([20])
   })
 
   it('offers add or remove depending on where the playhead is', async () => {
@@ -262,7 +268,7 @@ describe('AudioPane markers', () => {
     const wrapper = await mountPane([track({ markers: [20] })])
     engine.currentTime.value = NaN
     await button(wrapper, 'Add marker').trigger('click')
-    expect(markersOf(wrapper)).toEqual([20])
+    expect(atsOf(wrapper)).toEqual([20])
   })
 
   it('runs to the track ends when there is no marker that way', async () => {
@@ -386,6 +392,124 @@ describe('AudioPane saved loops', () => {
   })
 })
 
+describe('AudioPane marker menu', () => {
+  const zoomed = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(WaveformCanvas)
+  /** hold a flag and let go without moving it: the pane offers what to do with it */
+  const hold = (wrapper: ReturnType<typeof mount>, index: number) => zoomed(wrapper).vm.$emit('markerMenu', index, 120)
+  const nameField = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('input').find((i) => i.attributes('aria-label') === 'Name this marker')!
+
+  it('makes a held marker a skip, and puts it back', async () => {
+    const wrapper = await mountPane([track({ markers: [10, 20] })])
+    await hold(wrapper, 1)
+    await button(wrapper, 'Skip marker').trigger('click')
+    expect(markersOf(wrapper)).toEqual([{ at: 10 }, { at: 20, skip: true }])
+
+    await hold(wrapper, 1)
+    await button(wrapper, 'Normal marker').trigger('click')
+    expect(markersOf(wrapper)).toEqual([{ at: 10 }, { at: 20 }])
+  })
+
+  it('names the held marker, and an empty name puts its number back', async () => {
+    const wrapper = await mountPane([track({ markers: [10] })])
+    await hold(wrapper, 0)
+    expect(nameField(wrapper).attributes('placeholder')).toBe('Marker 1')
+    await nameField(wrapper).setValue('Solo')
+    await nameField(wrapper).trigger('change')
+    expect(markersOf(wrapper)).toEqual([{ at: 10, name: 'Solo' }])
+
+    await nameField(wrapper).setValue('  ')
+    await nameField(wrapper).trigger('change')
+    expect(markersOf(wrapper)).toEqual([{ at: 10 }])
+  })
+
+  it('keeps the name and the kind when the marker is moved, and writes them back', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountPane([track({ markers: [{ at: 10, name: 'Solo', skip: true }, { at: 20 }] })])
+    await zoomed(wrapper).vm.$emit('moveMarker', 0, 15)
+    await vi.advanceTimersByTimeAsync(600)
+    vi.useRealTimers()
+    expect(writtenTracks()[0].markers).toEqual([{ at: 15, name: 'Solo', skip: true }, { at: 20 }])
+  })
+
+  it('reads a track saved with bare positions', async () => {
+    const wrapper = await mountPane([track({ markers: [3, 7] })])
+    expect(markersOf(wrapper)).toEqual([{ at: 3 }, { at: 7 }])
+  })
+})
+
+describe('AudioPane skip markers', () => {
+  const playTo = async (wrapper: ReturnType<typeof mount>, from: number, to: number) => {
+    engine.currentTime.value = from
+    await wrapper.vm.$nextTick()
+    engine.currentTime.value = to
+    await wrapper.vm.$nextTick()
+  }
+
+  it('plays on from the next marker when it reaches one', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 10 }, { at: 20, skip: true }, { at: 30 }] })])
+    engine.playing.value = true
+    await playTo(wrapper, 19.9, 20.1)
+    expect(engine.seek).toHaveBeenLastCalledWith(30)
+  })
+
+  it('carries on past a run of them, and off the end of the last one', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 20, skip: true }, { at: 30, skip: true }] })])
+    engine.playing.value = true
+    await playTo(wrapper, 19.9, 20.1)
+    expect(engine.seek).toHaveBeenLastCalledWith(100) // no marker after them: the end of the track
+  })
+
+  it('leaves a skip alone while the track is not playing', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 20, skip: true }, { at: 30 }] })])
+    await playTo(wrapper, 19.9, 20.1)
+    expect(engine.seek).not.toHaveBeenCalled()
+  })
+})
+
+describe('AudioPane count-in', () => {
+  const field = (wrapper: ReturnType<typeof mount>, label: string) =>
+    wrapper.findAll('input').find((i) => i.attributes('aria-label') === label)!
+  const open = async (wrapper: ReturnType<typeof mount>) => {
+    await button(wrapper, 'Count-in').trigger('click')
+    return wrapper
+  }
+
+  it('offers the three settings, counting off four beats at the song tempo', async () => {
+    const wrapper = await open(await mountPane())
+    expect((field(wrapper, 'Count-in on').element as HTMLInputElement).checked).toBe(false)
+    expect((field(wrapper, 'Count-in tempo').element as HTMLInputElement).value).toBe('120') // the song's own bpm
+    expect((field(wrapper, 'Count-in beats').element as HTMLInputElement).value).toBe('4')
+  })
+
+  it('saves each of them to the song', async () => {
+    const wrapper = await open(await mountPane())
+    await field(wrapper, 'Count-in on').setValue(true)
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)![1]).toEqual({ countIn: { enabled: true, bpm: 120, beats: 4 } })
+
+    await field(wrapper, 'Count-in beats').setValue('3')
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)![1]).toEqual({ countIn: { enabled: false, bpm: 120, beats: 3 } })
+
+    await field(wrapper, 'Count-in tempo').setValue('90')
+    expect(vi.mocked(updateDoc).mock.calls.at(-1)![1]).toEqual({ countIn: { enabled: false, bpm: 90, beats: 4 } })
+  })
+
+  it('hands the engine the beats to count, and none at all when it is off', async () => {
+    await mountPane([track()], { countIn: { enabled: true, bpm: 90, beats: 3 } })
+    expect([engine.countInBeats.value, engine.countInBpm.value]).toEqual([3, 90])
+
+    await mountPane([track()], { countIn: { enabled: false, bpm: 90, beats: 3 } })
+    expect(engine.countInBeats.value).toBe(0)
+  })
+
+  it('shows the count as playing, so it can be called off', async () => {
+    const wrapper = await mountPane()
+    engine.countingIn.value = true
+    await wrapper.vm.$nextTick()
+    expect(button(wrapper, 'Pause')).toBeTruthy()
+  })
+})
+
 describe('AudioPane transport', () => {
   it('skips ten seconds each way', async () => {
     const wrapper = await mountPane()
@@ -468,7 +592,7 @@ describe('AudioPane persistence', () => {
     vi.useRealTimers()
 
     const written = vi.mocked(updateDoc).mock.calls.at(-1)![1] as unknown as { audioTracks: AudioTrack[] }
-    expect(written.audioTracks[0]).toMatchObject({ markers: [5, 20], tempo: 0.9, pitch: 0 })
+    expect(written.audioTracks[0]).toMatchObject({ markers: [{ at: 5 }, { at: 20 }], tempo: 0.9, pitch: 0 })
     expect(written.audioTracks[1].name).toBe('Live') // other tracks untouched
   })
 

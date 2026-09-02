@@ -2,7 +2,7 @@ import { computePeaks, decodeAudio } from '@/helpers/audioPeaks'
 import { uploadHashed } from '@/helpers/contentHash'
 import { resolveBytes } from '@/helpers/offlineCache'
 import { auth, songCollection } from '@/plugins/firebase'
-import { AudioTrack, Song, Stem, StemJob } from '@/types'
+import { AudioTrack, Marker, Song, Stem, StemJob } from '@/types'
 import { doc, updateDoc } from 'firebase/firestore'
 import { deleteObject, ref as firebaseRef, getDownloadURL, getStorage } from 'firebase/storage'
 
@@ -62,6 +62,16 @@ export function keySignatureOf(key?: string): Song['key_signature'] | undefined 
   if (!match) return undefined
   const minor = /^m/i.test(match[2] ?? '')
   return `${match[1]}${minor ? 'm' : ''}` as Song['key_signature']
+}
+
+/** the sections Moises found, as named markers: one per section start, in order */
+function sectionMarkers(segments: NonNullable<SplitResult['segments']>): Marker[] {
+  const byStart = new Map<number, Marker>()
+  for (const section of segments) {
+    const at = Math.round(section.start * 10) / 10
+    if (!byStart.has(at)) byStart.set(at, { at, name: section.label })
+  }
+  return [...byStart.values()].sort((a, b) => a.at - b.at)
 }
 
 /** A job nobody is driving any more, so another device may take it over. */
@@ -189,10 +199,9 @@ export async function splitTrack(song: Song, index: number, requested: string[],
     {
       stems: stored.map((s) => s.stem).sort((a, b) => stemOrder(a.name, b.name)),
       analysis: Object.keys(analysis).length ? analysis : undefined,
-      // section boundaries are markers, but only for a track that has none of its own
-      ...(result.segments?.length && !track.markers.length
-        ? { markers: [...new Set(result.segments.map((s) => Math.round(s.start * 10) / 10))].sort((a, b) => a - b) }
-        : {}),
+      // the sections it found are markers under their own names, but only for a track
+      // that has none of its own
+      ...(result.segments?.length && !track.markers.length ? { markers: sectionMarkers(result.segments) } : {}),
       stemJob: undefined,
     },
     Object.fromEntries(stored.map((s) => [s.stem.storageRef, s.hash]))

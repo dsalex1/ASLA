@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
-import { Loop } from '@/types'
+import { Loop, Marker } from '@/types'
 import { useElementSize } from '@vueuse/core'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -10,7 +10,7 @@ const props = withDefaults(
     duration: number
     start: number
     end: number
-    markers: number[]
+    markers: Marker[]
     loopA?: number | null
     loopB?: number | null
     /** the loop repeats; when it does not, the region is still shown but greyed out */
@@ -42,6 +42,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'seek', seconds: number): void
   (e: 'moveMarker', index: number, seconds: number): void
+  /** the marker was held without being moved: the caller offers what to do with it */
+  (e: 'markerMenu', index: number, x: number): void
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
   (e: 'selectLoop', index: number): void
   (e: 'zoom', span: number): void
@@ -57,6 +59,7 @@ const COLORS = {
   loopOffFill: 'rgba(160, 160, 160, 0.22)',
   zeroLine: '#333',
   marker: '#4a90d9',
+  skip: '#ef4444',
   playhead: '#e53935',
   handle: '#b3a086',
   grid: 'rgba(255, 255, 255, 0.13)',
@@ -398,11 +401,7 @@ function draw() {
     drawMonitorLegend(ctx)
   }
 
-  props.markers.forEach((seconds, i) => {
-    const x = xOf(seconds)
-    if (x < -FLAG_W || x > width.value) return
-    drawFlag(ctx, x, String(i + 1), isLoopBoundary(seconds) ? loopColor.value : COLORS.marker)
-  })
+  drawMarkers(ctx)
 
   drawLoops(ctx)
 
@@ -449,6 +448,29 @@ function drawLoops(ctx: CanvasRenderingContext2D) {
 const loopFlagAt = (x: number, y: number) =>
   y >= LOOP_TOP && y <= LOOP_TOP + FLAG_H ? loopFlags.find((f) => x >= f.x && x <= f.x + f.width) : undefined
 
+/** a skip marker is red wherever it sits; the rest go orange inside the A-B region */
+const markerColor = (marker: Marker) =>
+  marker.skip ? COLORS.skip : isLoopBoundary(marker.at) ? loopColor.value : COLORS.marker
+
+/** a marker is shown by its name once it has one, and by its number until then */
+const markerLabel = (marker: Marker, index: number) => marker.name || String(index + 1)
+
+/** the flags, and the boxes a press has to land in to have pressed one */
+let markerFlags: { x: number; width: number; index: number }[] = []
+
+function drawMarkers(ctx: CanvasRenderingContext2D) {
+  markerFlags = []
+  ctx.font = FLAG_FONT
+  props.markers.forEach((marker, i) => {
+    const label = markerLabel(marker, i)
+    const w = Math.max(FLAG_W, ctx.measureText(label).width + 12)
+    const x = xOf(marker.at)
+    if (x + w < 0 || x > width.value) return
+    drawFlag(ctx, x, label, markerColor(marker), 1, FLAG_TOP, w)
+    markerFlags.push({ x, width: w, index: i })
+  })
+}
+
 /** markers sitting on an A-B bound (or inside the loop) turn orange */
 function isLoopBoundary(seconds: number) {
   const { loopA, loopB } = props
@@ -482,7 +504,7 @@ const HOLD_MS = 350
 
 type Drag =
   | { kind: 'seek' }
-  | { kind: 'marker'; index: number; fromX: number; armed: boolean }
+  | { kind: 'marker'; index: number; fromX: number; armed: boolean; moved: boolean }
   | { kind: 'loop'; which: 'a' | 'b' }
   | { kind: 'selectLoop'; index: number }
   | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
@@ -510,8 +532,8 @@ function hitTest(x: number, y: number): Drag {
     if (props.loopB != null && Math.abs(x - (xOf(props.loopB) + HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'b' }
   }
   if (y <= FLAG_TOP + FLAG_H) {
-    const index = props.markers.findIndex((m) => x >= xOf(m) && x <= xOf(m) + FLAG_W)
-    if (index >= 0) return { kind: 'marker', index, fromX: x, armed: false }
+    const flag = markerFlags.find((f) => x >= f.x && x <= f.x + f.width)
+    if (flag) return { kind: 'marker', index: flag.index, fromX: x, armed: false, moved: false }
   }
   // on the zoomed view an empty press drags the wave under the centre playhead
   return props.draggable ? { kind: 'pan', fromX: x, fromPosition: props.position, moved: false } : { kind: 'seek' }
@@ -531,14 +553,17 @@ function applyDrag(x: number) {
     // it moved first, so this was a scrub that happened to start on a flag, not a grab
     cancelHold()
     drag = props.draggable
-      ? { kind: 'pan', fromX: grabbed.fromX, fromPosition: props.markers[grabbed.index], moved: true }
+      ? { kind: 'pan', fromX: grabbed.fromX, fromPosition: props.markers[grabbed.index].at, moved: true }
       : { kind: 'seek' }
     return applyDrag(x)
   }
   if (drag.kind === 'selectLoop') return emit('selectLoop', drag.index) // a press, not a drag
   const seconds = clampTime(timeOf(x))
   if (drag.kind === 'seek') emit('seek', seconds)
-  if (drag.kind === 'marker') emit('moveMarker', drag.index, seconds)
+  if (drag.kind === 'marker') {
+    if (Math.abs(x - drag.fromX) > TAP_SLOP) drag.moved = true
+    emit('moveMarker', drag.index, seconds)
+  }
   if (drag.kind === 'loop') emit('moveLoop', drag.which, seconds)
 }
 
@@ -562,7 +587,7 @@ function onPointerDown(e: PointerEvent) {
   if (drag.kind === 'marker') {
     // A press on a flag goes to it; only holding picks it up. Moving on press is what made
     // a tap meant as "take me back there" knock the marker off the place it was put.
-    emit('seek', clampTime(props.markers[drag.index]))
+    emit('seek', clampTime(props.markers[drag.index].at))
     const grabbed = drag
     holdTimer = setTimeout(() => ((grabbed.armed = true), (holdTimer = null)), HOLD_MS)
   } else if (drag.kind !== 'pan') applyDrag(localX(e)) // a pan only acts once it actually moves
@@ -582,6 +607,8 @@ function onPointerMove(e: PointerEvent) {
 function onPointerUp(e: PointerEvent) {
   // a press that never moved is a tap: jump to the spot it landed on
   if (drag?.kind === 'pan' && !drag.moved) emit('seek', clampTime(timeOf(localX(e))))
+  // held on a flag and let go without dragging it anywhere: ask what kind it should be
+  if (drag?.kind === 'marker' && drag.armed && !drag.moved) emit('markerMenu', drag.index, xOf(props.markers[drag.index].at))
   pointers.delete(e.pointerId)
   if (pointers.size < 2) pinchStart = null
   if (pointers.size === 0) (cancelHold(), (drag = null))

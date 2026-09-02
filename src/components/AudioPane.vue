@@ -9,7 +9,7 @@ import { estimateLag, Reading } from '@/helpers/levelAlign'
 import { PANE_VIEW_ICONS, PANE_VIEWS } from '@/helpers/paneViews'
 import { stemSources } from '@/helpers/stems'
 import { songCollection } from '@/plugins/firebase'
-import { AudioTrack, Loop, PaneView, Song } from '@/types'
+import { AudioTrack, CountIn, Loop, Marker, PaneView, Song } from '@/types'
 import { onClickOutside, useDebounceFn, useElementSize, useLocalStorage } from '@vueuse/core'
 import { doc, updateDoc } from 'firebase/firestore'
 import { computed, ref, watch } from 'vue'
@@ -40,7 +40,7 @@ const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
 const engine = useAudioEngine()
-const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB, limiterCeilingDb } = engine
+const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB, limiterCeilingDb, countingIn } = engine
 const { stemNames, stemVolume, stemPeaks } = engine
 
 const tracks = computed(() => props.song.audioTracks ?? [])
@@ -54,7 +54,9 @@ const mixerOpen = ref(false)
 const mixerAnchor = ref<HTMLElement | null>(null)
 onClickOutside(mixerAnchor, () => (mixerOpen.value = false))
 const job = computed(() => track.value?.stemJob)
-const markers = ref<number[]>([])
+// The markers on the track, held as objects while they are being worked on: each carries
+// its name and whether it is a skip, so both travel with it when it is moved.
+const markers = ref<Marker[]>([])
 // The saved selections on this track, read straight off the song: saving one on a phone
 // puts it on every other device. The live A-B is the engine's and is not one of them, so
 // dragging A about does not rewrite what was saved.
@@ -95,7 +97,8 @@ watch(
   async () => {
     const current = track.value
     if (!current) return
-    markers.value = [...current.markers]
+    // a track saved before markers were named carries bare positions
+    markers.value = current.markers.map((m) => (typeof m === 'number' ? { at: m } : { ...m }))
     loopA.value = loopB.value = null
     tempo.value = current.tempo ?? 1
     pitch.value = current.pitch ?? 0
@@ -154,33 +157,109 @@ watch(
 
 // --- markers ---
 const nearestMarker = (seconds: number) =>
-  markers.value.reduce<number | null>((best, m) => (best == null || Math.abs(m - seconds) < Math.abs(best - seconds) ? m : best), null)
+  markers.value.reduce<number | null>(
+    (best, m) => (best == null || Math.abs(m.at - seconds) < Math.abs(best - seconds) ? m.at : best),
+    null
+  )
 
 function snap(seconds: number) {
   const nearest = nearestMarker(seconds)
   return nearest != null && Math.abs(nearest - seconds) <= SNAP ? nearest : seconds
 }
 
-const markerAtPlayhead = computed(() =>
-  markers.value.some((m) => Math.abs(m - currentTime.value) <= MARKER_HIT)
-)
+const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m.at - currentTime.value) <= MARKER_HIT))
+
+const sorted = (list: Marker[]) => [...list].sort((a, b) => a.at - b.at)
 
 function toggleMarker() {
   if (!Number.isFinite(currentTime.value)) return
-  const existing = markers.value.findIndex((m) => Math.abs(m - currentTime.value) <= MARKER_HIT)
-  if (existing >= 0) markers.value = markers.value.filter((_, i) => i !== existing)
-  else markers.value = [...markers.value, currentTime.value].sort((a, b) => a - b)
+  const existing = markers.value.findIndex((m) => Math.abs(m.at - currentTime.value) <= MARKER_HIT)
+  markers.value =
+    existing >= 0
+      ? markers.value.filter((_, i) => i !== existing)
+      : sorted([...markers.value, { at: currentTime.value }])
 }
 
+/** the name and the kind belong to the marker, so they travel with it */
 function moveMarker(index: number, seconds: number) {
   if (!Number.isFinite(seconds)) return
-  const moved = markers.value.map((m, i) => (i === index ? seconds : m))
-  markers.value = moved.sort((a, b) => a - b)
+  markers.value = sorted(markers.value.map((m, i) => (i === index ? { ...m, at: seconds } : m)))
 }
+
+// --- naming a marker, and what kind it is ---
+// Holding a flag and letting go without dragging it opens this over the flag; the hold
+// still picks the marker up as soon as it is actually moved.
+const markerMenu = ref<{ index: number; x: number } | null>(null)
+const markerMenuAnchor = ref<HTMLElement | null>(null)
+onClickOutside(markerMenuAnchor, () => (markerMenu.value = null))
+watch(trackKey, () => (markerMenu.value = null)) // it belongs to a flag on the track that left
+
+const heldMarker = computed((): Marker | undefined => (markerMenu.value ? markers.value[markerMenu.value.index] : undefined))
+
+/** what is left of a marker once its empty fields are dropped: Firestore rejects undefined */
+const tidy = (m: Marker): Marker => ({ at: m.at, ...(m.name ? { name: m.name } : {}), ...(m.skip ? { skip: true } : {}) })
+
+function patchMarker(index: number, patch: Partial<Marker>) {
+  markers.value = markers.value.map((m, i) => (i === index ? tidy({ ...m, ...patch }) : m))
+}
+
+function setMarkerKind(index: number, skip: boolean) {
+  patchMarker(index, { skip })
+  markerMenu.value = null
+}
+
+/** typed into the menu; an empty name puts the marker back to being shown by number */
+const markerName = computed({
+  get: () => heldMarker.value?.name ?? '',
+  set: (value: string) => markerMenu.value && patchMarker(markerMenu.value.index, { name: value.trim() }),
+})
+
+/** where a skip lands: the next marker, or the one after that when it is a skip as well */
+function afterSkip(from: number): number {
+  const next = markers.value.find((m) => m.at > from)
+  if (!next) return trackDuration.value
+  return next.skip ? afterSkip(next.at) : next.at
+}
+
+watch(currentTime, (now, before) => {
+  if (!playing.value || now <= before) return // a wrap or a seek is not playing into one
+  const crossed = markers.value.find((m) => m.skip && m.at > before && m.at <= now)
+  if (crossed) engine.seek(afterSkip(crossed.at))
+})
+
+// --- count-in ---
+// The settings sit on the song, like the markers do: whoever counts the band in, everyone
+// gets the same four beats.
+const countIn = computed((): CountIn => props.song.countIn ?? {})
+const countInOn = computed(() => !!countIn.value.enabled)
+const countInBpm = computed(() => countIn.value.bpm ?? props.song.bpm ?? 120)
+const countInBeats = computed(() => countIn.value.beats ?? 4)
+const countInOpen = ref(false)
+const countInAnchor = ref<HTMLElement | null>(null)
+onClickOutside(countInAnchor, () => (countInOpen.value = false))
+
+function saveCountIn(patch: CountIn) {
+  if (!props.song.id) return
+  const next = { enabled: countInOn.value, bpm: countInBpm.value, beats: countInBeats.value, ...patch }
+  updateDoc(doc(songCollection, props.song.id), { countIn: next })
+}
+
+const fieldValue = (e: Event) => Number((e.target as HTMLInputElement).value)
+
+watch(
+  [countInOn, countInBeats, countInBpm],
+  () => {
+    engine.countInBeats.value = countInOn.value ? countInBeats.value : 0
+    engine.countInBpm.value = countInBpm.value
+  },
+  { immediate: true }
+)
 
 /** Every loop bound is a place you want to get back to as much as any marker, so the
  *  step buttons walk them alongside the flags. */
-const jumpTargets = computed(() => [...markers.value, ...loops.value.flatMap((l) => [l.a, l.b])].sort((a, b) => a - b))
+const jumpTargets = computed(() =>
+  [...markers.value.map((m) => m.at), ...loops.value.flatMap((l) => [l.a, l.b])].sort((a, b) => a - b)
+)
 
 const jumpMarker = (direction: -1 | 1) => {
   const candidates = jumpTargets.value.filter((m) => (direction < 0 ? m < currentTime.value - 0.3 : m > currentTime.value))
@@ -438,8 +517,35 @@ defineExpose({ position: currentTime })
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
         @selectLoop="selectLoop"
+        @markerMenu="(index, x) => (markerMenu = { index, x })"
         @zoom="zoom"
       />
+
+      <!-- what the held flag should be: somewhere to come back to, or somewhere to jump from -->
+      <div v-if="markerMenu" ref="markerMenuAnchor" class="marker-menu" :style="{ left: `${markerMenu.x}px` }">
+        <input
+          v-model.lazy="markerName"
+          class="loop-name"
+          :placeholder="`Marker ${markerMenu.index + 1}`"
+          aria-label="Name this marker"
+        />
+        <button
+          class="tbtn"
+          :class="{ 'tbtn--on': !heldMarker?.skip }"
+          aria-label="Normal marker"
+          @click="setMarkerKind(markerMenu.index, false)"
+        >
+          <i class="fas fa-flag" /> Marker
+        </button>
+        <button
+          class="tbtn"
+          :class="{ 'tbtn--on': heldMarker?.skip }"
+          aria-label="Skip marker"
+          @click="setMarkerKind(markerMenu.index, true)"
+        >
+          <i class="fas fa-forward-step" /> Skip
+        </button>
+      </div>
       <div v-if="showsSlot" ref="viewPane" class="h-100 w-100 d-flex justify-center view-pane">
         <slot name="view" :position="currentTime" :playing="playing" :height="viewHeight" />
       </div>
@@ -606,6 +712,52 @@ defineExpose({ position: currentTime })
           <i class="fas fa-circle-notch fa-spin" />
           {{ job.phase === 'storing' ? 'Storing stems' : 'Separating' }}...
         </span>
+        <div v-if="hasAudio" ref="countInAnchor" class="mixer-anchor">
+          <button
+            class="tbtn"
+            :class="{ 'tbtn--on': countInOn }"
+            aria-label="Count-in"
+            :title="countInOn ? `${countInBeats} beats at ${countInBpm} bpm` : 'No count-in'"
+            @click="countInOpen = !countInOpen"
+          >
+            <i class="fas fa-hourglass-start" />
+          </button>
+          <div v-if="countInOpen" class="count-in-popover">
+            <label class="count-in-row">
+              <span>Count in</span>
+              <input
+                type="checkbox"
+                :checked="countInOn"
+                aria-label="Count-in on"
+                @change="saveCountIn({ enabled: ($event.target as HTMLInputElement).checked })"
+              />
+            </label>
+            <label class="count-in-row">
+              <span>Tempo</span>
+              <input
+                type="number"
+                class="count-in-field"
+                :value="countInBpm"
+                min="20"
+                max="300"
+                aria-label="Count-in tempo"
+                @change="saveCountIn({ bpm: fieldValue($event) })"
+              />
+            </label>
+            <label class="count-in-row">
+              <span>Beats</span>
+              <input
+                type="number"
+                class="count-in-field"
+                :value="countInBeats"
+                min="1"
+                max="16"
+                aria-label="Count-in beats"
+                @change="saveCountIn({ beats: fieldValue($event) })"
+              />
+            </label>
+          </div>
+        </div>
         <button
           v-if="hasAudio"
           class="tbtn"
@@ -623,11 +775,11 @@ defineExpose({ position: currentTime })
         <button class="tbtn" aria-label="Back 10 seconds" :disabled="!hasAudio" @click="engine.skip(-SKIP)"><i class="fas fa-backward" /></button>
         <button
           class="tbtn tbtn--play"
-          :aria-label="playing ? 'Pause' : 'Play'"
+          :aria-label="playing || countingIn ? 'Pause' : 'Play'"
           :disabled="!hasAudio || !!error || loading"
           @click="engine.toggle"
         >
-          <i :class="playing ? 'fas fa-pause' : 'fas fa-play'" />
+          <i :class="playing || countingIn ? 'fas fa-pause' : 'fas fa-play'" />
         </button>
         <button class="tbtn" aria-label="Forward 10 seconds" :disabled="!hasAudio" @click="engine.skip(SKIP)"><i class="fas fa-forward" /></button>
         <button class="tbtn" aria-label="Next song" :disabled="!hasNext" @click="emit('nextSong')"><i class="fas fa-forward-fast" /></button>
@@ -678,7 +830,8 @@ defineExpose({ position: currentTime })
 }
 
 /* over the button it belongs to, and no wider than the faders need */
-.mixer-popover {
+.mixer-popover,
+.count-in-popover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
@@ -802,6 +955,39 @@ defineExpose({ position: currentTime })
 .segmented .tbtn:last-child {
   border-start-end-radius: 6px;
   border-end-end-radius: 6px;
+}
+
+.count-in-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.count-in-field {
+  width: 64px;
+  padding: 2px 6px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #0d0d0d;
+  color: #eee;
+  text-align: right;
+}
+/* over the flag it was opened on, just under the row of flags */
+.marker-menu {
+  position: absolute;
+  top: 34px;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  transform: translateX(-4px);
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #141414;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 60%);
+  white-space: nowrap;
 }
 
 .loop-row {

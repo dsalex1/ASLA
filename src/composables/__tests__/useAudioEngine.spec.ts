@@ -1,6 +1,6 @@
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { nextTick } from 'vue'
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 /**
  * What this guards is the same thing the old soundtouch worklet spec guarded, said in the
@@ -20,20 +20,21 @@ let stretchNode: any
 let scheduled: { semitones?: number }[] = []
 let sourceRates: number[] = []
 let gains = 0
+let clickTimes: number[] = []
 
 const tag = (n: any) => n?.__tag ?? 'unknown'
 
 function node(__tag: string, extra: object = {}) {
   const self: any = {
     __tag,
-    connect: (to: any) => edges.push([__tag, tag(to)]),
+    connect: (to: any) => (edges.push([__tag, tag(to)]), to),
     disconnect: () => (edges = edges.filter(([from]) => from !== __tag)),
     ...extra,
   }
   return self
 }
 
-const param = (value = 0) => ({ value, setTargetAtTime: () => {} })
+const param = (value = 0) => ({ value, setTargetAtTime: () => {}, setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} })
 
 vi.mock('@/audio/signalsmith', () => ({ stretchFactory: async () => async () => stretchNode }))
 
@@ -49,6 +50,8 @@ class FakeAudioContext {
   createDynamicsCompressor = () =>
     node('limiter', { knee: param(), threshold: param(), ratio: param(), attack: param(), release: param() })
   createAnalyser = () => node('analyser', { fftSize: 0, getFloatTimeDomainData: () => {} })
+  createOscillator = () =>
+    node('osc', { frequency: param(0), start: (at: number) => clickTimes.push(at), stop: () => {} })
   createBufferSource = () => {
     const src: any = node('source', {
       playbackRate: param(1),
@@ -72,6 +75,7 @@ beforeEach(() => {
   scheduled = []
   sourceRates = []
   gains = 0
+  clickTimes = []
   stretchNode = node('stretch', {
     schedule: (c: { semitones?: number }) => scheduled.push(c),
     start: () => {},
@@ -81,6 +85,8 @@ beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', () => 0)
   vi.stubGlobal('cancelAnimationFrame', () => {})
 })
+
+afterEach(() => vi.useRealTimers())
 
 /** what the mix is feeding: the stretcher, or the output gain past it */
 const mixGoesTo = () => edges.find(([from]) => from === 'gain0')?.[1]
@@ -100,6 +106,40 @@ async function settle(engine: ReturnType<typeof useAudioEngine>, tempo: number, 
   await new Promise((r) => setTimeout(r))
   await new Promise((r) => setTimeout(r))
 }
+
+async function counting(beats: number, bpm: number) {
+  const engine = useAudioEngine()
+  await engine.load(async () => new ArrayBuffer(8))
+  engine.countInBeats.value = beats
+  engine.countInBpm.value = bpm
+  const started = engine.play()
+  await vi.advanceTimersByTimeAsync(0) // far enough for the clicks to be scheduled
+  return { engine, started }
+}
+
+test('counts the beats off before the track comes in', async () => {
+  vi.useFakeTimers()
+  const { engine, started } = await counting(4, 120)
+  // all four scheduled up front on the audio clock, half a second apart
+  expect(clickTimes).toEqual([0.1, 0.6, 1.1, 1.6])
+  expect(engine.playing.value).toBe(false) // nothing plays until they are done
+  expect(engine.countingIn.value).toBe(true)
+
+  await vi.advanceTimersByTimeAsync(2100)
+  await started
+  expect([engine.playing.value, engine.countingIn.value]).toEqual([true, false])
+})
+
+test('pausing over the count calls it off and leaves the track where it was', async () => {
+  vi.useFakeTimers()
+  const { engine, started } = await counting(4, 120)
+  engine.pause()
+  expect(engine.countingIn.value).toBe(false)
+
+  await vi.advanceTimersByTimeAsync(2100)
+  await started
+  expect(engine.playing.value).toBe(false)
+})
 
 test('plays an unaltered track without going through the stretcher', async () => {
   await started()

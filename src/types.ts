@@ -64,8 +64,8 @@ export type AudioTrack = {
   storageRef: string
   peaksRef: string
   duration: number
-  /** marker positions in seconds, kept sorted; displayed numbered 1..n */
-  markers: number[]
+  /** the markers on the track, kept sorted; a bare number is the shape before they were named */
+  markers: (number | Marker)[]
   /** the saved A-B selections on this track; the live A-B is not stored */
   loops?: Loop[]
   /** @deprecated fields an older shape wrote; read once, then dropped on the next write */
@@ -80,6 +80,20 @@ export type AudioTrack = {
   analysis?: TrackAnalysis
   /** where the file came from, when it was not a local upload */
   source?: { kind: 'youtube'; videoId: string; title: string }
+}
+
+/**
+ * A place on the track, named or shown by its number. A skip marker is not somewhere to
+ * come back to: playing into one carries on from the next marker.
+ */
+export type Marker = { at: number; name?: string; skip?: boolean }
+
+/** the clicks counted off before the track comes in */
+export type CountIn = {
+  enabled?: boolean
+  /** the beat they are counted at; the song's own bpm until it is set */
+  bpm?: number
+  beats?: number
 }
 
 export type Song = {
@@ -101,6 +115,7 @@ export type Song = {
   folderId?: string | null // null/absent = no folder
   /** sha-256 (16 hex chars) of the bytes at each storage ref, keyed by ref path; the offline cache key */
   hashes?: Record<string, string>
+  countIn?: CountIn
   audioTracks?: AudioTrack[]
   selectedAudioTrack?: number // index into audioTracks, remembered between visits
 }

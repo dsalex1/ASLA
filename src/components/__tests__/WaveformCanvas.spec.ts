@@ -170,7 +170,7 @@ describe('WaveformCanvas drawing', () => {
   })
 
   it('numbers markers in order and skips ones scrolled out of view', async () => {
-    await render({ markers: [1, 5], start: 4, end: 10 })
+    await render({ markers: [{ at: 1 }, { at: 5 }], start: 4, end: 10 })
     expect(markerLabels()).toEqual(['2']) // marker 1 is left of the window
   })
 
@@ -197,7 +197,7 @@ describe('WaveformCanvas drawing', () => {
   })
 
   it('turns markers inside the A-B region orange', async () => {
-    await render({ markers: [1, 3], loopA: 2, loopB: 4 })
+    await render({ markers: [{ at: 1 }, { at: 3 }], loopA: 2, loopB: 4 })
     const strokes = callsOf('stroke').map((c) => c[1])
     expect(strokes).toContain('#4a90d9') // marker at 1s, outside the loop
     expect(strokes).toContain('#f59e0b') // marker at 3s, inside it
@@ -266,14 +266,14 @@ describe('WaveformCanvas interaction', () => {
       wrapper.find('.waveform').trigger('pointermove', { clientX, clientY: 10, pointerId: 1 })
 
     it('jumps to the marker rather than moving it', async () => {
-      const wrapper = await render({ markers: [1, 5] })
+      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }] })
       await onFlag(wrapper)
       expect(wrapper.emitted('seek')![0]).toEqual([5])
       expect(wrapper.emitted('moveMarker')).toBeUndefined()
     })
 
     it('picks the marker up once the press has been held', async () => {
-      const wrapper = await render({ markers: [1, 5], draggable: true })
+      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true })
       vi.useFakeTimers()
       await onFlag(wrapper)
       await drag(wrapper, 507) // still inside the slop, so the hold survives it
@@ -286,7 +286,7 @@ describe('WaveformCanvas interaction', () => {
     })
 
     it('scrubs instead when the press moves before the hold lands', async () => {
-      const wrapper = await render({ markers: [1, 5], draggable: true })
+      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true })
       await onFlag(wrapper)
       await drag(wrapper, 605) // 100 px right, so the wave goes one second back under it
       expect(wrapper.emitted('moveMarker')).toBeUndefined()
@@ -375,7 +375,7 @@ describe('WaveformCanvas interaction', () => {
     })
 
     it('a held flag is still a grab rather than a pan', async () => {
-      const wrapper = await render({ draggable: true, markers: [5], position: 5, start: 0, end: 10 })
+      const wrapper = await render({ draggable: true, markers: [{ at: 5 }], position: 5, start: 0, end: 10 })
       vi.useFakeTimers()
       await down(wrapper, 505, 10)
       await vi.advanceTimersByTimeAsync(400)
@@ -387,7 +387,7 @@ describe('WaveformCanvas interaction', () => {
   })
 
   it('always seeks on the overview strip, even on top of a flag', async () => {
-    const wrapper = await render({ overview: true, markers: [5] })
+    const wrapper = await render({ overview: true, markers: [{ at: 5 }] })
     await down(wrapper, 505, 10)
     expect(wrapper.emitted('moveMarker')).toBeUndefined()
     expect(wrapper.emitted('seek')![0]).toEqual([5.05])
