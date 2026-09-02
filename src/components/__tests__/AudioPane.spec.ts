@@ -453,6 +453,19 @@ describe('AudioPane skip markers', () => {
     expect(engine.seek).toHaveBeenLastCalledWith(30)
   })
 
+  it('comes in where a skip at the playhead skips to, so the count-in leads into the music', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 0, skip: true }, { at: 30 }] })])
+    await button(wrapper, 'Play').trigger('click')
+    expect(engine.seek).toHaveBeenCalledWith(30) // before the count is scheduled, not after it
+    expect(engine.toggle).toHaveBeenCalledOnce()
+  })
+
+  it('leaves a skip further down the track to be played into', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 20, skip: true }, { at: 30 }] })])
+    await button(wrapper, 'Play').trigger('click')
+    expect(engine.seek).not.toHaveBeenCalled()
+  })
+
   it('plays on from the next marker when it reaches one', async () => {
     const wrapper = await mountPane([track({ markers: [{ at: 10 }, { at: 20, skip: true }, { at: 30 }] })])
     engine.playing.value = true

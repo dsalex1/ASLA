@@ -221,6 +221,19 @@ function afterSkip(from: number): number {
   return next.skip ? afterSkip(next.at) : next.at
 }
 
+/**
+ * Pressing play on a skip marker starts where it skips to, rather than starting on the
+ * marker and jumping a frame later: the count-in has to lead into the music it counts in,
+ * and a jump after the downbeat is a jump behind the beat.
+ */
+function togglePlay() {
+  if (!playing.value && !countingIn.value) {
+    const here = markers.value.find((m) => m.skip && m.at >= currentTime.value && m.at <= currentTime.value + MARKER_HIT)
+    if (here) engine.seek(afterSkip(here.at))
+  }
+  engine.toggle()
+}
+
 watch(currentTime, (now, before) => {
   if (!playing.value || now <= before) return // a wrap or a seek is not playing into one
   const crossed = markers.value.find((m) => m.skip && m.at >= before && m.at <= now)
@@ -720,7 +733,7 @@ defineExpose({ position: currentTime })
             :title="countInOn ? `${countInBeats} beats at ${countInBpm} bpm` : 'No count-in'"
             @click="countInOpen = !countInOpen"
           >
-            <i class="fas fa-stopwatch-20" />
+            <i class="fas fa-stopwatch" />
           </button>
           <div v-if="countInOpen" class="count-in-popover">
             <div class="count-in-row">
@@ -779,7 +792,7 @@ defineExpose({ position: currentTime })
           class="tbtn tbtn--play"
           :aria-label="playing || countingIn ? 'Pause' : 'Play'"
           :disabled="!hasAudio || !!error || loading"
-          @click="engine.toggle"
+          @click="togglePlay"
         >
           <i :class="playing || countingIn ? 'fas fa-pause' : 'fas fa-play'" />
         </button>
