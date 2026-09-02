@@ -21,6 +21,8 @@ let scheduled: { semitones?: number }[] = []
 let sourceRates: number[] = []
 let gains = 0
 let clickTimes: number[] = []
+let sourceStarts: number[] = []
+let sourceStops = 0
 
 const tag = (n: any) => n?.__tag ?? 'unknown'
 
@@ -55,8 +57,8 @@ class FakeAudioContext {
   createBufferSource = () => {
     const src: any = node('source', {
       playbackRate: param(1),
-      start: () => {},
-      stop: () => {},
+      start: (when: number) => sourceStarts.push(when),
+      stop: () => sourceStops++,
       set buffer(_b: AudioBuffer) {},
     })
     sourceRates.push(0)
@@ -76,6 +78,8 @@ beforeEach(() => {
   sourceRates = []
   gains = 0
   clickTimes = []
+  sourceStarts = []
+  sourceStops = 0
   stretchNode = node('stretch', {
     schedule: (c: { semitones?: number }) => scheduled.push(c),
     start: () => {},
@@ -112,32 +116,44 @@ async function counting(beats: number, bpm: number) {
   await engine.load(async () => new ArrayBuffer(8))
   engine.countInBeats.value = beats
   engine.countInBpm.value = bpm
-  const started = engine.play()
-  await vi.advanceTimersByTimeAsync(0) // far enough for the clicks to be scheduled
-  return { engine, started }
+  await engine.play()
+  return engine
 }
 
-test('counts the beats off before the track comes in', async () => {
+test('counts the beats off and brings the track in on the downbeat after them', async () => {
   vi.useFakeTimers()
-  const { engine, started } = await counting(4, 120)
-  // all four scheduled up front on the audio clock, half a second apart
+  const engine = await counting(4, 120)
+  // all four scheduled up front on the audio clock, half a second apart...
   expect(clickTimes).toEqual([0.1, 0.6, 1.1, 1.6])
-  expect(engine.playing.value).toBe(false) // nothing plays until they are done
+  // ...and the track with them, for the beat after the last click rather than for whenever
+  // a timer happens to fire
+  expect(sourceStarts).toEqual([2.1])
   expect(engine.countingIn.value).toBe(true)
+  expect(engine.currentTime.value).toBe(0) // the playhead holds at the start over the count
 
   await vi.advanceTimersByTimeAsync(2100)
-  await started
   expect([engine.playing.value, engine.countingIn.value]).toEqual([true, false])
 })
 
-test('pausing over the count calls it off and leaves the track where it was', async () => {
+test('gives the sources a head start when the graph holds the sound back', async () => {
+  const engine = useAudioEngine()
+  await engine.load(async () => new ArrayBuffer(8))
+  await settle(engine, 1, 3) // a capo puts the mix through the stretcher, which holds 120 ms
+  engine.countInBeats.value = 4
+  engine.countInBpm.value = 120
+  await engine.play()
+  expect(sourceStarts.at(-1)).toBeCloseTo(2.1 - 0.12, 6) // out of the speakers on the downbeat
+  engine.pause() // and nothing left counting once the test is done
+})
+
+test('pausing over the count calls it off, track and clicks together', async () => {
   vi.useFakeTimers()
-  const { engine, started } = await counting(4, 120)
+  const engine = await counting(4, 120)
   engine.pause()
-  expect(engine.countingIn.value).toBe(false)
+  expect([engine.countingIn.value, engine.playing.value]).toEqual([false, false])
+  expect(sourceStops).toBe(1) // the scheduled track is called off before it is heard
 
   await vi.advanceTimersByTimeAsync(2100)
-  await started
   expect(engine.playing.value).toBe(false)
 })
 

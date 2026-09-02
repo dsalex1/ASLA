@@ -315,7 +315,7 @@ export function useAudioEngine() {
    * set. They read the same AudioBuffers throughout — the samples are never copied, which
    * is what lets a five minute track with four stems be seeked without re-sending it.
    */
-  function startSources(at: number) {
+  function startSources(at: number, when = 0) {
     stopSources()
     const ctx = audioContext()
     for (const [name, buf] of tracks()) {
@@ -324,9 +324,21 @@ export function useAudioEngine() {
       src.buffer = buf
       src.playbackRate.value = tempo.value
       src.connect(stemGains.get(name) ?? mix!)
-      src.start(0, at)
+      src.start(when, at)
       sources.push(src)
     }
+  }
+
+  /**
+   * Start the track so that what comes *out* lands on the downbeat: the sources are given
+   * a head start of whatever the graph holds, since a count-in has to be in time with the
+   * sound, not with when the sources were told to go. Once the downbeat has passed this is
+   * simply "now", which is what a seek or a plain play does.
+   */
+  function startFrom(at: number) {
+    const from = Math.max(audioContext().currentTime, downbeatAt - engineLag())
+    startSources(at, from)
+    rebase(from)
   }
 
   // The playhead is driven off the audio clock: the stretcher's own `inputTime` reports
@@ -335,8 +347,8 @@ export function useAudioEngine() {
   let baseTrackTime = 0
   let frame: number | null = null
 
-  function rebase() {
-    baseContextTime = audioContext().currentTime
+  function rebase(at = audioContext().currentTime) {
+    baseContextTime = at
     baseTrackTime = currentTime.value
   }
 
@@ -368,25 +380,35 @@ export function useAudioEngine() {
   const wrapLead = () => Math.min(engineLag() * tempo.value, (loopB.value! - loopA.value!) / 2)
 
   // --- count-in ------------------------------------------------------------------------
-  // One oscillator per beat, all scheduled up front on the audio clock, so the count is
-  // as steady as the track that follows it and no JS timer can drift it.
+  // Every beat is scheduled up front on the audio clock, and so is the track: the downbeat
+  // is simply the beat after the last click, which is what keeps the band's count and the
+  // recording in time with each other.
   let clicks: OscillatorNode[] = []
-  let countCalledOff = false
+  let countTimer: ReturnType<typeof setTimeout> | null = null
+  /** when the track is due to come out of the speakers; in the past once it has */
+  let downbeatAt = 0
 
   function scheduleClick(at: number, accent: boolean) {
     const ctx = audioContext()
+    // in after the trim but through the same limiter as the track, so nothing the track
+    // goes through can move it against the count
+    output()
     const osc = ctx.createOscillator()
     const env = ctx.createGain()
     osc.frequency.value = accent ? 1500 : 1000
     env.gain.setValueAtTime(0.6, at)
     env.gain.exponentialRampToValueAtTime(0.001, at + 0.05)
-    osc.connect(env).connect(ctx.destination)
+    osc.connect(env)
+    env.connect(limiter!)
     osc.start(at)
     osc.stop(at + 0.05)
     clicks.push(osc)
   }
 
   function stopClicks() {
+    if (countTimer) clearTimeout(countTimer)
+    countTimer = null
+    countingIn.value = false
     for (const c of clicks) {
       try {
         c.stop()
@@ -398,23 +420,16 @@ export function useAudioEngine() {
     clicks = []
   }
 
-  /** count the beats off, and say whether they ran to the end rather than being called off */
+  /** count the beats off, and say when the downbeat after them lands on the audio clock */
   function countOff() {
     const ctx = audioContext()
     const interval = 60 / Math.max(countInBpm.value, 1)
     const first = ctx.currentTime + 0.1 // room to schedule before the first beat is due
     for (let beat = 0; beat < countInBeats.value; beat++) scheduleClick(first + beat * interval, beat === 0)
+    const downbeat = first + countInBeats.value * interval
     countingIn.value = true
-    countCalledOff = false
-    return new Promise<boolean>((resolve) =>
-      setTimeout(
-        () => {
-          countingIn.value = false
-          resolve(!countCalledOff)
-        },
-        (first + countInBeats.value * interval - ctx.currentTime) * 1000
-      )
-    )
+    countTimer = setTimeout(() => ((countingIn.value = false), (countTimer = null)), (downbeat - ctx.currentTime) * 1000)
+    return downbeat
   }
 
   function tick() {
@@ -433,19 +448,17 @@ export function useAudioEngine() {
     if (!mix) buildGraph()
     await route()
     if (looping() && (currentTime.value < loopA.value! || currentTime.value >= loopB.value!)) seek(loopA.value!)
-    if (countInBeats.value > 0 && !(await countOff())) return // pause was pressed over the count
-    startSources(currentTime.value)
-    rebase()
+    // the count and the track go on the audio clock together; the playhead holds at the
+    // start until the downbeat, since that is when anything is heard
+    downbeatAt = countInBeats.value > 0 ? countOff() : audioContext().currentTime
+    startFrom(currentTime.value)
     playing.value = true
     tick()
   }
 
   function pause() {
-    if (countingIn.value) {
-      countCalledOff = true
-      countingIn.value = false
-      stopClicks()
-    }
+    stopClicks() // a count still running is called off with the track
+    downbeatAt = 0
     // frames stop while the page is hidden, so take the position from the clock rather
     // than trusting whatever the last frame wrote
     if (playing.value) currentTime.value = Math.max(0, Math.min(positionNow(), duration.value))
@@ -486,8 +499,9 @@ export function useAudioEngine() {
   function seek(seconds: number) {
     if (!Number.isFinite(seconds)) return // a seek from a not-yet-measured waveform must not poison the position
     currentTime.value = Math.max(0, Math.min(seconds, duration.value))
-    if (playing.value) startSources(currentTime.value)
-    rebase()
+    // scrubbing over a count-in moves where it will come in, it does not bring it in early
+    if (playing.value) startFrom(currentTime.value)
+    else rebase()
   }
 
   const skip = (seconds: number) => seek(currentTime.value + seconds)
@@ -501,8 +515,9 @@ export function useAudioEngine() {
     for (const s of sources) s.playbackRate.value = tempo.value
     const was = bypassed
     await route()
-    if (playing.value && bypassed !== was) startSources(currentTime.value)
-    rebase() // the clock slope changes with tempo, so restart the measurement from here
+    // the clock slope changes with tempo, so the measurement restarts from here either way
+    if (playing.value && bypassed !== was) startFrom(currentTime.value)
+    else rebase()
   }
 
   watch([tempo, pitch], () => void retune())
