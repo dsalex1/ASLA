@@ -261,10 +261,39 @@ describe('WaveformCanvas interaction', () => {
     expect(wrapper.emitted('seek')![0]).toEqual([3])
   })
 
-  it('drags a marker when its flag is pressed', async () => {
-    const wrapper = await render({ markers: [1, 5] })
-    await down(wrapper, 505, 10) // inside the flag of marker 2 (x 500..526, y 4..30)
-    expect(wrapper.emitted('moveMarker')![0]).toEqual([1, 5.05])
+  describe('pressing a marker flag', () => {
+    // inside the flag of marker 2 (x 500..526, y 4..30)
+    const onFlag = (wrapper: ReturnType<typeof mount>) => down(wrapper, 505, 10)
+    const drag = (wrapper: ReturnType<typeof mount>, clientX: number) =>
+      wrapper.find('.waveform').trigger('pointermove', { clientX, clientY: 10, pointerId: 1 })
+
+    it('jumps to the marker rather than moving it', async () => {
+      const wrapper = await render({ markers: [1, 5] })
+      await onFlag(wrapper)
+      expect(wrapper.emitted('seek')![0]).toEqual([5])
+      expect(wrapper.emitted('moveMarker')).toBeUndefined()
+    })
+
+    it('picks the marker up once the press has been held', async () => {
+      const wrapper = await render({ markers: [1, 5], draggable: true })
+      vi.useFakeTimers()
+      await onFlag(wrapper)
+      await drag(wrapper, 507) // still inside the slop, so the hold survives it
+      expect(wrapper.emitted('moveMarker')).toBeUndefined() // not held long enough yet
+
+      await vi.advanceTimersByTimeAsync(400)
+      vi.useRealTimers()
+      await drag(wrapper, 700)
+      expect(wrapper.emitted('moveMarker')!.at(-1)).toEqual([1, 7])
+    })
+
+    it('scrubs instead when the press moves before the hold lands', async () => {
+      const wrapper = await render({ markers: [1, 5], draggable: true })
+      await onFlag(wrapper)
+      await drag(wrapper, 605) // 100 px right, so the wave goes one second back under it
+      expect(wrapper.emitted('moveMarker')).toBeUndefined()
+      expect(wrapper.emitted('seek')!.at(-1)).toEqual([4])
+    })
   })
 
   it('drags the A handle when its box is pressed', async () => {
@@ -345,10 +374,15 @@ describe('WaveformCanvas interaction', () => {
       expect(wrapper.emitted('seek')!.at(-1)).toEqual([0])
     })
 
-    it('still grabs a marker flag rather than panning', async () => {
+    it('a held flag is still a grab rather than a pan', async () => {
       const wrapper = await render({ draggable: true, markers: [5], position: 5, start: 0, end: 10 })
+      vi.useFakeTimers()
       await down(wrapper, 505, 10)
-      expect(wrapper.emitted('moveMarker')![0]).toEqual([0, 5.05])
+      await vi.advanceTimersByTimeAsync(400)
+      vi.useRealTimers()
+      await move(wrapper, 605)
+      expect(wrapper.emitted('moveMarker')!.at(-1)).toEqual([0, 6.05])
+      expect(wrapper.emitted('seek')).toEqual([[5]]) // the press itself, and nothing panned
     })
   })
 
