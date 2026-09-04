@@ -2,6 +2,7 @@
 import JogStrip from '@/components/JogStrip.vue'
 import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
+import { useAccess } from '@/composables/useAccess'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioBytes, loadPeaks } from '@/helpers/audioTracks'
@@ -39,6 +40,7 @@ const MARKER_HIT = 0.3 // pressing the marker button this close to one removes i
 const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
 
+const { canWrite } = useAccess()
 const engine = useAudioEngine()
 const { currentTime, duration, playing, loading, error, tempo, pitch, gainDb, loopA, loopB, limiterCeilingDb, countingIn } = engine
 const { stemNames, stemVolume, stemPeaks } = engine
@@ -114,7 +116,7 @@ watch(
 // --- persistence: markers, loops, tempo and pitch belong to the track ---
 /** write these fields of the selected track back to the song */
 function saveTrack(patch: Partial<AudioTrack>) {
-  if (!props.song.id || !track.value) return
+  if (!props.song.id || !track.value || !canWrite.value) return
   const updated = tracks.value.map((t, i) => {
     if (i !== trackIndex.value) return t
     const next: AudioTrack = { ...t, ...patch }
@@ -172,7 +174,7 @@ const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m.at 
 const sorted = (list: Marker[]) => [...list].sort((a, b) => a.at - b.at)
 
 function toggleMarker() {
-  if (!Number.isFinite(currentTime.value)) return
+  if (!canWrite.value || !Number.isFinite(currentTime.value)) return
   const existing = markers.value.findIndex((m) => Math.abs(m.at - currentTime.value) <= MARKER_HIT)
   markers.value =
     existing >= 0
@@ -182,7 +184,7 @@ function toggleMarker() {
 
 /** the name and the kind belong to the marker, so they travel with it */
 function moveMarker(index: number, seconds: number) {
-  if (!Number.isFinite(seconds)) return
+  if (!canWrite.value || !Number.isFinite(seconds)) return
   markers.value = sorted(markers.value.map((m, i) => (i === index ? { ...m, at: seconds } : m)))
 }
 
@@ -200,6 +202,7 @@ const heldMarker = computed((): Marker | undefined => (markerMenu.value ? marker
 const tidy = (m: Marker): Marker => ({ at: m.at, ...(m.name ? { name: m.name } : {}), ...(m.skip ? { skip: true } : {}) })
 
 function patchMarker(index: number, patch: Partial<Marker>) {
+  if (!canWrite.value) return
   markers.value = markers.value.map((m, i) => (i === index ? tidy({ ...m, ...patch }) : m))
 }
 
@@ -243,7 +246,11 @@ watch(currentTime, (now, before) => {
 // --- count-in ---
 // The settings sit on the song, like the markers do: whoever counts the band in, everyone
 // gets the same four beats.
-const countIn = computed((): CountIn => props.song.countIn ?? {})
+// A read-only account cannot change the band's count-in, but counting yourself in is
+// exactly what practising wants, so theirs is this device's own and is not written.
+const localCountIn = ref<CountIn | null>(null)
+watch(() => props.song.id, () => (localCountIn.value = null))
+const countIn = computed((): CountIn => localCountIn.value ?? props.song.countIn ?? {})
 const countInOn = computed(() => !!countIn.value.enabled)
 const countInBpm = computed(() => countIn.value.bpm ?? props.song.bpm ?? 120)
 const countInBeats = computed(() => countIn.value.beats ?? 4)
@@ -252,8 +259,9 @@ const countInAnchor = ref<HTMLElement | null>(null)
 onClickOutside(countInAnchor, () => (countInOpen.value = false))
 
 function saveCountIn(patch: CountIn) {
-  if (!props.song.id) return
   const next = { enabled: countInOn.value, bpm: countInBpm.value, beats: countInBeats.value, ...patch }
+  if (!canWrite.value) return void (localCountIn.value = next)
+  if (!props.song.id) return
   updateDoc(doc(songCollection, props.song.id), { countIn: next })
 }
 
@@ -537,12 +545,13 @@ defineExpose({ position: currentTime })
         :reduction="reduction"
         :ceilingDb="limiterCeilingDb"
         :headroomDb="monitor ? MONITOR_HEADROOM : IDLE_HEADROOM"
+        :editable="canWrite"
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
         @moveSavedLoop="moveSavedLoop"
         @selectLoop="selectLoop"
-        @markerMenu="(index, x) => (markerMenu = { index, x })"
+        @markerMenu="(index, x) => canWrite && (markerMenu = { index, x })"
         @zoom="zoom"
       />
 
@@ -607,6 +616,7 @@ defineExpose({ position: currentTime })
       <div class="group">
         <button class="tbtn" aria-label="Previous marker" @click="jumpMarker(-1)"><i class="fas fa-backward-step" /></button>
         <button
+          v-if="canWrite"
           class="tbtn"
           :class="{ 'tbtn--on': markerAtPlayhead }"
           :aria-label="markerAtPlayhead ? 'Remove marker' : 'Add marker'"
@@ -654,16 +664,18 @@ defineExpose({ position: currentTime })
         :loopB="loopB"
         :loopActive="loopBarOpen"
         :position="currentTime"
+        :editable="canWrite"
         @seek="engine.seek"
         @moveSavedLoop="moveSavedLoop"
         @selectLoop="selectLoop"
       />
       <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">
-        <button class="add-audio" @click="emit('addAudio')">
+        <button v-if="canWrite" class="add-audio" @click="emit('addAudio')">
           No audio -
           <i class="fab fa-youtube" />
           add a track from YouTube
         </button>
+        <span v-else>No audio</span>
       </div>
     </div>
 
@@ -683,7 +695,7 @@ defineExpose({ position: currentTime })
         <input
           v-model.lazy="loopName"
           class="loop-name"
-          :disabled="!currentLoop"
+          :disabled="!currentLoop || !canWrite"
           :placeholder="currentLoop ? `Loop ${selectedLoop + 1}` : 'No loop'"
           aria-label="Name this loop"
         />
@@ -691,12 +703,12 @@ defineExpose({ position: currentTime })
           class="tbtn"
           aria-label="Save loop"
           title="Save the A-B as a loop"
-          :disabled="!hasLoop || selectedLoop >= 0"
+          :disabled="!hasLoop || selectedLoop >= 0 || !canWrite"
           @click="saveLoop"
         >
           <i class="fas fa-plus" />
         </button>
-        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop" @click="deleteLoop">
+        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop || !canWrite" @click="deleteLoop">
           <i class="fas fa-trash" />
         </button>
       </div>

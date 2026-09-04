@@ -1,7 +1,7 @@
 // Seeds the local Firebase emulators (npm run emulators) with a test user and songs.
 // Safe by construction: demo- project id + explicit emulator hosts, never touches prod.
 import { initializeApp } from 'firebase/app'
-import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth } from 'firebase/auth'
+import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { connectFirestoreEmulator, doc, getFirestore, setDoc } from 'firebase/firestore'
 import { connectStorageEmulator, getStorage, ref, uploadBytes } from 'firebase/storage'
 import { createHash } from 'node:crypto'
@@ -79,13 +79,32 @@ function makePeaks({ bytes, samples, rate }, perSecond = 100) {
   return peaks
 }
 
-try {
-  await createUserWithEmailAndPassword(auth, 'user@user.com', 'useruser')
-  console.log('created user user@user.com / useruser')
-} catch (e) {
-  if (e.code !== 'auth/email-already-in-use') throw e
-  console.log('user user@user.com already exists')
+/**
+ * The two roles. The admin has the run of the app; the plain user reads, and only the
+ * setlists their profile names. Both profiles are written unauthenticated, which is the
+ * one way the first admin can exist: the rules let nobody else write this collection.
+ */
+async function seedAccount(email, password, profile) {
+  let uid
+  try {
+    const credential = await createUserWithEmailAndPassword(auth, email, password)
+    uid = credential.user.uid
+    console.log(`created ${email} / ${password}`)
+  } catch (e) {
+    if (e.code !== 'auth/email-already-in-use') throw e
+    const credential = await signInWithEmailAndPassword(auth, email, password)
+    uid = credential.user.uid
+    console.log(`${email} already exists`)
+  }
+  // both calls above leave this script signed in as the account it just touched, and a
+  // signed-in client is held to the real rules: the profile has to be written signed out
+  await signOut(auth)
+  await setDoc(doc(db, 'users', uid), { email, ...profile })
 }
+
+await seedAccount('admin@admin.com', 'adminadmin', { role: 'admin', setlists: [] })
+// assigned the one setlist, so the other proves a user is shown only what they were given
+await seedAccount('user@user.com', 'useruser', { role: 'user', setlists: ['test-setlist'] })
 
 /** matches src/helpers/contentHash.ts, so seeded songs key the offline cache like uploaded ones */
 const hashes = {}
@@ -173,5 +192,12 @@ await setDoc(doc(db, 'setlist', 'test-setlist'), {
   updatedAt: new Date().toISOString(),
 })
 
-console.log('seeded songs "Test Song" (3-page sheet, 2-page drums, 60 s audio track), "Chords Song" (chord lyrics) and setlist "Test Setlist"')
+// nobody is assigned this one, so it must be invisible to user@user.com and visible to the admin
+await setDoc(doc(db, 'setlist', 'private-setlist'), {
+  name: 'Admin Only Setlist',
+  songs: ['wonderwall'],
+  updatedAt: new Date(Date.now() - 60000).toISOString(),
+})
+
+console.log('seeded accounts admin@admin.com/adminadmin and user@user.com/useruser, songs "Test Song" (3-page sheet, 2-page drums, 60 s audio track), "Chords Song" (chord lyrics) and setlist "Test Setlist"')
 process.exit(0)

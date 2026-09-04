@@ -39,6 +39,18 @@ vi.mock('firebase/storage', () => ({
   deleteObject: vi.fn(() => Promise.resolve()),
 }))
 
+// the role check talks to auth and firestore; components under test are the admin's view
+vi.mock('@/composables/useAccess', () => {
+  const isAdmin = ref(true)
+  return {
+    isAdmin,
+    canWrite: isAdmin,
+    accessReady: ref(true),
+    canSeeSetlist: () => true,
+    useAccess: () => ({ profile: ref({ email: 'admin@test', role: 'admin' }), isAdmin, canWrite: isAdmin, accessReady: ref(true), canSeeSetlist: () => true }),
+  }
+})
+
 // components mounted bare are not inside a <router-view>
 vi.mock('vue-router', async (original) => ({
   ...(await original<typeof import('vue-router')>()),

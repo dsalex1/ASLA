@@ -390,6 +390,33 @@ describe('WaveformCanvas interaction', () => {
     expect(wrapper.emitted('moveSavedLoop')![0]).toEqual([0, which, expected])
   })
 
+  it('never lifts a flag that cannot be saved, and scrubs from it instead', async () => {
+    // a read-only account: the loop is still selectable, but holding must not pick it up,
+    // because the move it would make cannot be written and would spring straight back
+    const wrapper = await render({ overview: true, editable: false, loops: [{ a: 2, b: 4, name: 'Chorus' }] })
+    vi.useFakeTimers()
+    await down(wrapper, 210, 10)
+    await vi.advanceTimersByTimeAsync(400)
+    vi.useRealTimers()
+    expect(wrapper.emitted('selectLoop')![0]).toEqual([0])
+    await wrapper.find('.waveform').trigger('pointermove', { clientX: 310, clientY: 10, pointerId: 1 })
+    await wrapper.find('.waveform').trigger('pointerup', { clientX: 310, clientY: 10, pointerId: 1 })
+    expect(wrapper.emitted('moveSavedLoop')).toBeUndefined()
+    expect(wrapper.emitted('seek')!.at(-1)).toEqual([3.1])
+  })
+
+  it('leaves a marker flag alone when it cannot be saved, and still jumps to it', async () => {
+    const wrapper = await render({ editable: false, markers: [{ at: 1 }, { at: 5 }] })
+    vi.useFakeTimers()
+    await down(wrapper, 505, 10)
+    await vi.advanceTimersByTimeAsync(400)
+    vi.useRealTimers()
+    await up(wrapper, 505, 10)
+    expect(wrapper.emitted('markerMenu')).toBeUndefined()
+    expect(wrapper.emitted('moveMarker')).toBeUndefined()
+    expect(wrapper.emitted('seek')![0]).toEqual([5])
+  })
+
   it('ignores the wheel on the overview strip', async () => {
     const wrapper = await render({ overview: true })
     await wrapper.find('.waveform').trigger('wheel', { deltaY: -100 })
