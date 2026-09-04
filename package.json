@@ -14,7 +14,7 @@
     "deploy:beta": "node scripts/deployBeta.mjs",
     "cors:isla": "gcloud storage buckets update gs://ibis-setlist-app.firebasestorage.app --cors-file=storage.cors.json",
     "deploy:isla": "npm run build:isla && firebase deploy --config firebase.isla.json --project ibis-setlist-app",
-    "rules:asla": "firebase deploy --only firestore:rules,storage:rules --config firebase.asla.json --project alex-set-list-app",
+    "rules:asla": "firebase deploy --only firestore:rules,storage --config firebase.asla.json --project alex-set-list-app",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
