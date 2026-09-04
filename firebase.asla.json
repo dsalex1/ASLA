@@ -1,0 +1,7 @@
+{
+  "firestore": { "rules": "rules/firestore.rules" },
+  "storage": {
+    "bucket": "alex-set-list-app.appspot.com",
+    "rules": "rules/storage.rules"
+  }
+}
