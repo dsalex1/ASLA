@@ -35,3 +35,6 @@ dist-beta
 .beta-build
 
 dist-isla
+
+# firebase deploy cache, written by deploy:isla / rules:asla
+.firebase/
