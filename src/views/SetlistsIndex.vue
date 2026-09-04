@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import OfflineToggle from '@/components/OfflineToggle.vue'
 import { useAccess } from '@/composables/useAccess'
 import AppLayout from '@/layouts/AppLayout.vue'
@@ -9,7 +10,7 @@ import { useCollection } from 'vuefire'
 import { useDisplay } from 'vuetify'
 
 const { mobile } = useDisplay()
-const { isAdmin, canSeeSetlist } = useAccess()
+const { isAdmin, canSeeSetlist, accessReady } = useAccess()
 
 const modes = [
   { mode: 'lyrics', label: 'Lyrics', icon: 'fa fa-microphone', color: 'secondary' },
@@ -21,6 +22,10 @@ const modes = [
 const allSetlists = useCollection(setlistCollection)
 // the whole collection is readable; a plain user is only shown what they were assigned
 const setlists = computed(() => allSetlists.value.filter((s) => canSeeSetlist(s.id)))
+// An empty list means "none of them are yours", which cannot be said until both the
+// setlists and the role that filters them are in. Until then it is not empty, it is
+// unknown, and saying the wrong one of those flashes on every load.
+const loading = computed(() => allSetlists.pending.value || !accessReady.value)
 const songs = useCollection(songCollection)
 
 const songsOf = (setlist: Setlist) =>
@@ -53,10 +58,13 @@ function formatDuration(duration?: number) {
         <v-btn color="primary" prepend-icon="fas fa-plus">create</v-btn>
       </RouterLink>
     </div>
-    <v-alert v-if="!setlists.length" type="info" variant="tonal" class="mt-4">
+    <div v-if="loading" class="d-flex justify-center mt-8">
+      <LoadingSpinner />
+    </div>
+    <v-alert v-else-if="!setlists.length" type="info" variant="tonal" class="mt-4">
       No setlists yet. Ask an admin to share one with you.
     </v-alert>
-    <v-row class="mt-2">
+    <v-row v-else class="mt-2">
       <v-col
         v-for="setlist in [...setlists].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))"
         :key="setlist.id"
