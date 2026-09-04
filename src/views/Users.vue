@@ -65,7 +65,10 @@ async function revoke(user: UserProfile) {
   await deleteDoc(doc(userCollection, user.id!))
 }
 
+/** this leaves the app and lands in someone's inbox, so it is asked for rather than assumed */
 async function resetPassword(user: UserProfile) {
+  if (!confirm(`Send a password reset email to ${user.email}? They will get a mail with a link to set a new password.`))
+    return
   error.value = notice.value = ''
   try {
     await sendPasswordResetEmail(auth, user.email)
@@ -153,6 +156,8 @@ async function resetPassword(user: UserProfile) {
         <span v-else class="text-grey text-caption">that's you</span>
       </v-card-title>
       <v-card-text>
+<!-- the chips need room to wrap: at compact density a couple of setlists already
+             squeeze against the label and each other -->
         <v-select
           v-if="user.role !== 'admin'"
           :model-value="user.setlists ?? []"
@@ -161,7 +166,7 @@ async function resetPassword(user: UserProfile) {
           multiple
           chips
           closable-chips
-          density="compact"
+          variant="outlined"
           hide-details
           @update:model-value="(ids: string[]) => setSetlists(user, ids)"
         />
