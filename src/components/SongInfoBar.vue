@@ -9,6 +9,8 @@ const props = defineProps<{
   song: Song
   mode?: ViewMode
   annotatable?: boolean
+  /** false for a read-only account: the shared knobs go, the per-device ones stay */
+  canWrite?: boolean
   transpose: number
   /** the view actually on screen, which is the chosen one unless it fell back */
   shown: PaneView
@@ -111,8 +113,8 @@ const playedKey = computed(() =>
       {{ bpm }} BPM
     </v-btn>
     <template v-if="showLyrics">
-      <!-- the song's key, shared with the band -->
-      <template v-if="showingChords()">
+      <!-- the song's key, shared with the band; read-only accounts get the capo only -->
+      <template v-if="showingChords() && canWrite">
         <v-btn
           class="ms-2"
           variant="tonal"
@@ -132,7 +134,9 @@ const playedKey = computed(() =>
           @click="$emit('transpose', 1)"
         />
 
-        <!-- and this device's own capo on top of it, which nobody else sees -->
+      </template>
+      <!-- and this device's own capo on top of it, which nobody else sees -->
+      <template v-if="showingChords()">
         <v-btn
           class="ms-4"
           variant="tonal"

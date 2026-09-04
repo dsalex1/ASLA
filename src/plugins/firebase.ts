@@ -13,11 +13,11 @@ import {
 import { connectStorageEmulator, getStorage } from 'firebase/storage'
 import { getPerformance } from 'firebase/performance'
 import { getAnalytics } from 'firebase/analytics'
-import { Folder, Setlist, Song } from '@/types'
+import { Folder, Setlist, Song, UserProfile } from '@/types'
 
 const env = import.meta.env
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: env.VITE_FIREBASE_API_KEY,
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: env.VITE_FIREBASE_PROJECT_ID,
@@ -31,7 +31,7 @@ export const app = initializeApp(firebaseConfig)
 
 export const auth = getAuth(app)
 
-const useEmulators = env.VITE_FIREBASE_EMULATORS === 'true'
+export const useEmulators = env.VITE_FIREBASE_EMULATORS === 'true'
 
 // Unlimited because the default 40MB cache evicts, and a pinned setlist whose song docs
 // were evicted has lyrics and markers missing with no way to fetch them offline. The
@@ -59,6 +59,7 @@ const typedCollection = <T>(db: Firestore, col: string) => collection(db, col) a
 export const setlistCollection = typedCollection<Setlist>(db, 'setlist')
 export const songCollection = typedCollection<Song>(db, 'songs')
 export const folderCollection = typedCollection<Folder>(db, 'folders')
+export const userCollection = typedCollection<UserProfile>(db, 'users')
 
 type FilteredKeys<T, U> = { [P in keyof T]: P extends U ? never : P }[keyof T]
 

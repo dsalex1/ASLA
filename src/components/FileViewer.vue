@@ -6,6 +6,7 @@ import FileNavStrip from '@/components/FileNavStrip.vue'
 import LyricsPane from '@/components/LyricsPane.vue'
 import SheetPane from '@/components/SheetPane.vue'
 import SongEdit from '@/components/SongEdit.vue'
+import { useAccess } from '@/composables/useAccess'
 import { useCapo } from '@/composables/useCapo'
 import SongInfoBar from '@/components/SongInfoBar.vue'
 import { useAnnotations } from '@/composables/useAnnotations'
@@ -26,6 +27,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'songDeleted'): void }>()
+
+const { canWrite } = useAccess()
 
 const currentFileIndex = ref(0)
 const currentFilePage = ref(1)
@@ -121,7 +124,7 @@ const annotWidth = ref(2)
 const editDialogOpen = ref(false)
 /** set when the dialog was opened to add audio, so it can start where that is done */
 const editFocus = ref<'youtube' | undefined>()
-const editableSong = computed(() => (song.value?.id ? song.value : undefined))
+const editableSong = computed(() => (canWrite.value && song.value?.id ? song.value : undefined))
 
 function goToSong(delta: number) {
   const target = currentFileIndex.value + delta
@@ -173,7 +176,7 @@ let transposeTarget: number | null = null
 watch(currentSong, () => (transposeTarget = null))
 
 function saveSong(fields: Partial<Song>) {
-  if (!song.value?.id) return
+  if (!song.value?.id || !canWrite.value) return
   updateDoc(doc(songCollection, song.value.id), fields)
 }
 
@@ -233,7 +236,8 @@ const noSheetHint = computed(() =>
       v-if="!annot && song"
       :song="song"
       :mode="mode"
-      :annotatable="annotatable"
+      :annotatable="annotatable && canWrite"
+      :canWrite="canWrite"
       :transpose="transpose"
       v-model:capo="capo"
       :shown="shown"
@@ -337,7 +341,7 @@ const noSheetHint = computed(() =>
         :noSheetHint="noSheetHint"
         :fontSize="fontSize"
         :transpose="shown == 'chords' ? displayTranspose : 0"
-        :editable="annotatable && shown == 'chords'"
+        :editable="annotatable && canWrite && shown == 'chords'"
         v-model:autoScroll="autoScroll"
         @update:lyrics="(lyrics) => saveSong({ lyrics })"
       />

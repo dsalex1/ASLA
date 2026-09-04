@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import OfflineToggle from '@/components/OfflineToggle.vue'
+import { useAccess } from '@/composables/useAccess'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { setlistCollection, songCollection } from '@/plugins/firebase'
 import { Setlist } from '@/types'
+import { computed } from 'vue'
 import { useCollection } from 'vuefire'
 import { useDisplay } from 'vuetify'
 
 const { mobile } = useDisplay()
+const { isAdmin, canSeeSetlist } = useAccess()
 
 const modes = [
   { mode: 'lyrics', label: 'Lyrics', icon: 'fa fa-microphone', color: 'secondary' },
@@ -15,7 +18,9 @@ const modes = [
   { mode: 'audio', label: 'Audio', icon: 'fas fa-headphones', color: 'warning' },
 ] as const
 
-const setlists = useCollection(setlistCollection)
+const allSetlists = useCollection(setlistCollection)
+// the whole collection is readable; a plain user is only shown what they were assigned
+const setlists = computed(() => allSetlists.value.filter((s) => canSeeSetlist(s.id)))
 const songs = useCollection(songCollection)
 
 const songsOf = (setlist: Setlist) =>
@@ -36,7 +41,7 @@ function formatDuration(duration?: number) {
   <AppLayout>
     <div class="d-flex align-center justify-end flex-wrap ga-2 mb-2">
       <h2 class="mb-0" style="flex-grow: 1">Setlists</h2>
-      <div class="order-2 order-sm-1">
+      <div v-if="isAdmin" class="order-2 order-sm-1">
         <RouterLink to="/song" class="me-2">
           <v-btn color="info" prepend-icon="fas fa-music">songs</v-btn>
         </RouterLink>
@@ -44,10 +49,13 @@ function formatDuration(duration?: number) {
           <v-btn color="secondary" prepend-icon="fas fa-cog">settings</v-btn>
         </RouterLink>
       </div>
-      <RouterLink to="/setlist/create" style="margin-left: auto" class="order-1 order-sm-2">
+      <RouterLink v-if="isAdmin" to="/setlist/create" style="margin-left: auto" class="order-1 order-sm-2">
         <v-btn color="primary" prepend-icon="fas fa-plus">create</v-btn>
       </RouterLink>
     </div>
+    <v-alert v-if="!setlists.length" type="info" variant="tonal" class="mt-4">
+      No setlists yet. Ask an admin to share one with you.
+    </v-alert>
     <v-row class="mt-2">
       <v-col
         v-for="setlist in [...setlists].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))"
@@ -66,7 +74,7 @@ function formatDuration(duration?: number) {
             </v-card-title>
             <div class="d-flex align-center flex-shrink-0">
               <OfflineToggle :setlist-id="setlist.id!" :songs="songsOf(setlist)" />
-              <RouterLink :to="`/setlist/${setlist.id}/edit`">
+              <RouterLink v-if="isAdmin" :to="`/setlist/${setlist.id}/edit`">
                 <!-- VBtn ignores the `icon` prop's glyph when a default slot exists at all,
                      so the icon-only variant has to be its own element -->
                 <v-btn

@@ -1,8 +1,18 @@
-/*export type User = {
-  id: string
-  name: string
+export type Role = 'admin' | 'user'
+
+/**
+ * Who may write, and which setlists a plain user is shown. Keyed by the auth uid, so an
+ * account without one of these has no access at all: the very first admin has to be
+ * written from the Firebase console (or the emulator seed), because only an admin may
+ * write this collection.
+ */
+export type UserProfile = {
+  id?: string
   email: string
-}*/
+  role: Role
+  /** setlist ids this user may see; admins see every setlist and ignore this */
+  setlists?: string[]
+}
 
 export type Setlist = {
   id?: string

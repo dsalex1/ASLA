@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import AppUpdatePrompt from '@/components/AppUpdatePrompt.vue'
 import { HOME_ROUTE } from '@/router'
+import { useAccess } from '@/composables/useAccess'
 import { useAuth } from '@/stores/auth'
 import { RouterLink } from 'vue-router'
 
 const auth = useAuth()
+const { isAdmin } = useAccess()
 
 // the beta tag belongs to the beta channel only: a production build stamps nothing and
 // shows the bare version
@@ -21,6 +23,9 @@ const version = `V${__APP_VERSION__}${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` 
       </RouterLink>
       <v-spacer></v-spacer>
 
+      <RouterLink v-if="isAdmin" to="/users" class="me-3">
+        <v-btn prepend-icon="fas fa-users" color="white" variant="text">users</v-btn>
+      </RouterLink>
       <span class="me-3">{{ auth.user?.email }}</span>
       <v-btn prepend-icon="fas fa-sign-out" color="white" variant="outlined" @click="auth.logout">Logout</v-btn>
     </v-toolbar>
