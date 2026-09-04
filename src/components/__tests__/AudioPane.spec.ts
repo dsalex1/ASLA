@@ -361,6 +361,15 @@ describe('AudioPane saved loops', () => {
     expect([engine.loopA.value, engine.loopB.value]).toEqual([40, 50])
   })
 
+  it('moves a saved loop flag and keeps a selected A-B attached', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50, name: 'Outro' }] })])
+    await overview(wrapper).vm.$emit('selectLoop', 1)
+    await wrapper.vm.$nextTick()
+    await overview(wrapper).vm.$emit('moveSavedLoop', 1, 'a', 45)
+    expect(writtenTracks()[0].loops).toEqual([{ a: 10, b: 20 }, { a: 45, b: 50, name: 'Outro' }])
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([45, 50])
+  })
+
   it('names the loop the A-B stands on', async () => {
     const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }] })])
     await setAB(wrapper, 10, 20)

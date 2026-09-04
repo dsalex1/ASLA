@@ -310,6 +310,17 @@ function selectLoop(index: number) {
   loopB.value = loop.b
 }
 
+/** Dragging a saved loop flag edits that loop; a selected A-B follows the edit. */
+function moveSavedLoop(index: number, which: 'a' | 'b', seconds: number) {
+  const loop = loops.value[index]
+  if (!loop || !Number.isFinite(seconds)) return
+  const at = snap(seconds)
+  if ((which === 'a' && at >= loop.b) || (which === 'b' && at <= loop.a)) return
+  const selected = selectedLoop.value === index
+  saveTrack({ loops: loops.value.map((saved, i) => (i === index ? { ...saved, [which]: at } : saved)) })
+  if (selected) (which === 'a' ? loopA : loopB).value = at
+}
+
 /** drop the saved loop the A-B stands on; the A-B itself stays where it is */
 function deleteLoop() {
   if (selectedLoop.value < 0) return
@@ -529,6 +540,7 @@ defineExpose({ position: currentTime })
         @seek="engine.seek"
         @moveMarker="moveMarker"
         @moveLoop="setLoop"
+        @moveSavedLoop="moveSavedLoop"
         @selectLoop="selectLoop"
         @markerMenu="(index, x) => (markerMenu = { index, x })"
         @zoom="zoom"
@@ -643,6 +655,7 @@ defineExpose({ position: currentTime })
         :loopActive="loopBarOpen"
         :position="currentTime"
         @seek="engine.seek"
+        @moveSavedLoop="moveSavedLoop"
         @selectLoop="selectLoop"
       />
       <div v-else class="h-100 d-flex align-center justify-center text-grey no-audio">

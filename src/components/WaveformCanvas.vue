@@ -45,6 +45,7 @@ const emit = defineEmits<{
   /** the marker was held without being moved: the caller offers what to do with it */
   (e: 'markerMenu', index: number, x: number): void
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
+  (e: 'moveSavedLoop', index: number, which: 'a' | 'b', seconds: number): void
   (e: 'selectLoop', index: number): void
   (e: 'zoom', span: number): void
 }>()
@@ -87,7 +88,13 @@ const FLAG_FONT = 'bold 14px sans-serif'
 const HANDLE_W = 30
 const HANDLE_H = 60
 const FLAG_TOP = 4
-const LOOP_TOP = FLAG_TOP + FLAG_H // the loops hang in a second row, clear of the markers
+const LOOP_FLAG_H = 18
+const LOOP_FLAG_FONT = 'bold 11px sans-serif'
+const LOOP_END_W = 10
+const FLAG_X_GAP = 2
+const FLAG_ROW_H = FLAG_H + 2
+const OVERVIEW_FLAG_TOP = 3
+const OVERVIEW_ROW_H = LOOP_FLAG_H + 1
 
 const wrapper = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -189,8 +196,12 @@ function drawFlag(
   color: string,
   direction: 1 | -1 = 1,
   top = FLAG_TOP,
-  w = FLAG_W
+  w = FLAG_W,
+  h = FLAG_H,
+  font = FLAG_FONT,
+  active = false
 ) {
+  if (active) top -= 3
   const tip = x + direction * w
   const middle = x + direction * (w / 2)
   ctx.strokeStyle = color
@@ -204,17 +215,24 @@ function drawFlag(
   ctx.beginPath()
   ctx.moveTo(x, top)
   ctx.lineTo(tip, top)
-  ctx.lineTo(tip, top + FLAG_H)
-  ctx.lineTo(middle, top + FLAG_H * 0.72)
-  ctx.lineTo(x, top + FLAG_H)
+  ctx.lineTo(tip, top + h)
+  ctx.lineTo(middle, top + h * 0.72)
+  ctx.lineTo(x, top + h)
   ctx.closePath()
   ctx.fill()
+  if (active) {
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
 
-  ctx.fillStyle = '#fff'
-  ctx.font = FLAG_FONT
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, middle, top + FLAG_H * 0.42)
+  if (label) {
+    ctx.fillStyle = '#fff'
+    ctx.font = font
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, middle, top + h * 0.42)
+  }
 }
 
 function drawHandle(ctx: CanvasRenderingContext2D, x: number, label: 'A' | 'B') {
@@ -401,9 +419,7 @@ function draw() {
     drawMonitorLegend(ctx)
   }
 
-  drawMarkers(ctx)
-
-  drawLoops(ctx)
+  drawFlags(ctx)
 
   if (loopA != null) drawHandle(ctx, xOf(loopA), 'A')
   if (loopB != null) drawHandle(ctx, xOf(loopB), 'B')
@@ -419,34 +435,24 @@ function draw() {
 
 const loopLabel = (loop: Loop, index: number) => loop.name || String(index + 1)
 
-/**
- * Every saved loop, as a pair of flags carrying its name. They are the loop list as well
- * as the picture of it: pressing either flag is what puts the A-B back on that loop.
- */
-let loopFlags: { x: number; width: number; index: number }[] = []
-
-function drawLoops(ctx: CanvasRenderingContext2D) {
-  loopFlags = []
-  props.loops.forEach((loop, i) => {
-    const label = loopLabel(loop, i)
-    ctx.font = FLAG_FONT
-    const w = Math.max(FLAG_W, ctx.measureText(label).width + 12)
-    for (const [at, direction] of [
-      [loop.a, 1],
-      [loop.b, -1],
-    ] as const) {
-      const x = xOf(at)
-      const left = direction > 0 ? x : x - w
-      if (left > width.value || left + w < 0) continue
-      drawFlag(ctx, x, label, COLORS.loop, direction, LOOP_TOP, w)
-      loopFlags.push({ x: left, width: w, index: i })
-    }
-  })
+type LoopPreview = { index: number; which: 'a' | 'b'; at: number }
+type FlagItem = {
+  kind: 'marker' | 'loop'
+  index: number
+  at: number
+  x: number
+  left: number
+  width: number
+  height: number
+  label: string
+  color: string
+  direction: 1 | -1
+  font: string
+  which?: 'a' | 'b'
+  active?: boolean
 }
-
-/** the loop flag under a press, if that is what was pressed */
-const loopFlagAt = (x: number, y: number) =>
-  y >= LOOP_TOP && y <= LOOP_TOP + FLAG_H ? loopFlags.find((f) => x >= f.x && x <= f.x + f.width) : undefined
+let loopPreview: LoopPreview | null = null
+let loopFlags: { x: number; y: number; width: number; index: number; which: 'a' | 'b'; at: number }[] = []
 
 /** a skip marker is red wherever it sits; the rest go orange inside the A-B region */
 const markerColor = (marker: Marker) =>
@@ -456,20 +462,83 @@ const markerColor = (marker: Marker) =>
 const markerLabel = (marker: Marker, index: number) => marker.name || String(index + 1)
 
 /** the flags, and the boxes a press has to land in to have pressed one */
-let markerFlags: { x: number; width: number; index: number }[] = []
+let markerFlags: { x: number; y: number; width: number; height: number; index: number }[] = []
 
-function drawMarkers(ctx: CanvasRenderingContext2D) {
+/** Pack every visible flag into the first pixel row where its box does not overlap. */
+function drawFlags(ctx: CanvasRenderingContext2D) {
+  const items: FlagItem[] = []
   markerFlags = []
-  ctx.font = FLAG_FONT
+  loopFlags = []
+  const markerHeight = props.overview ? LOOP_FLAG_H : FLAG_H
+  const markerFont = props.overview ? LOOP_FLAG_FONT : FLAG_FONT
+  ctx.font = markerFont
   props.markers.forEach((marker, i) => {
     const label = markerLabel(marker, i)
-    const w = Math.max(FLAG_W, ctx.measureText(label).width + 12)
+    const width = Math.max(props.overview ? 22 : FLAG_W, ctx.measureText(label).width + (props.overview ? 8 : 12))
     const x = xOf(marker.at)
-    if (x + w < 0 || x > width.value) return
-    drawFlag(ctx, x, label, markerColor(marker), 1, FLAG_TOP, w)
-    markerFlags.push({ x, width: w, index: i })
+    items.push({
+      kind: 'marker',
+      index: i,
+      at: marker.at,
+      x,
+      left: x,
+      width,
+      height: markerHeight,
+      label,
+      color: markerColor(marker),
+      direction: 1,
+      font: markerFont,
+      active: drag?.kind === 'marker' && drag.armed && drag.index === i,
+    })
   })
+
+  ctx.font = LOOP_FLAG_FONT
+  props.loops.forEach((saved, i) => {
+    const loop = loopPreview?.index === i ? { ...saved, [loopPreview.which]: loopPreview.at } : saved
+    const label = loopLabel(loop, i)
+    const startWidth = Math.max(22, ctx.measureText(label).width + 8)
+    for (const [at, which, direction, text, flagWidth] of [
+      [loop.a, 'a', 1, label, startWidth],
+      [loop.b, 'b', -1, '', LOOP_END_W],
+    ] as const) {
+      const x = xOf(at)
+      items.push({
+        kind: 'loop',
+        index: i,
+        at,
+        x,
+        left: direction > 0 ? x : x - flagWidth,
+        width: flagWidth,
+        height: LOOP_FLAG_H,
+        label: text,
+        color: COLORS.loop,
+        direction,
+        font: LOOP_FLAG_FONT,
+        which,
+        active: drag?.kind === 'savedLoop' && drag.armed && drag.index === i && drag.which === which,
+      })
+    }
+  })
+
+  const rowRights: number[] = []
+  items
+    .filter((item) => item.left <= width.value && item.left + item.width >= 0)
+    .sort((a, b) => a.left - b.left)
+    .forEach((item) => {
+      let row = rowRights.findIndex((right) => item.left >= right + FLAG_X_GAP)
+      if (row < 0) row = rowRights.length
+      rowRights[row] = item.left + item.width
+      const top = (props.overview ? OVERVIEW_FLAG_TOP : FLAG_TOP) + row * (props.overview ? OVERVIEW_ROW_H : FLAG_ROW_H)
+      drawFlag(ctx, item.x, item.label, item.color, item.direction, top, item.width, item.height, item.font, item.active)
+      if (item.kind === 'marker')
+        markerFlags.push({ x: item.left, y: item.active ? top - 3 : top, width: item.width, height: item.height, index: item.index })
+      else loopFlags.push({ x: item.left, y: item.active ? top - 3 : top, width: item.width, index: item.index, which: item.which!, at: item.at })
+    })
 }
+
+/** the loop flag under a press, if that is what was pressed */
+const loopFlagAt = (x: number, y: number) =>
+  loopFlags.find((f) => y >= f.y && y <= f.y + LOOP_FLAG_H && x >= f.x && x <= f.x + f.width)
 
 /** markers sitting on an A-B bound (or inside the loop) turn orange */
 function isLoopBoundary(seconds: number) {
@@ -496,6 +565,11 @@ watch(
   scheduleDraw,
   { immediate: true, deep: true }
 )
+watch(
+  () => props.loops,
+  () => (loopPreview = null),
+  { deep: true }
+)
 
 // --- pointer interaction ---
 const TAP_SLOP = 4 // a press that moves less than this is a tap, not a drag
@@ -505,8 +579,8 @@ const HOLD_MS = 350
 type Drag =
   | { kind: 'seek' }
   | { kind: 'marker'; index: number; fromX: number; armed: boolean; moved: boolean }
-  | { kind: 'loop'; which: 'a' | 'b' }
-  | { kind: 'selectLoop'; index: number }
+  | { kind: 'loop'; which: 'a' | 'b'; fromX: number; fromTime: number }
+  | { kind: 'savedLoop'; index: number; which: 'a' | 'b'; fromX: number; fromTime: number; armed: boolean; moved: boolean }
   | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
 
 let drag: Drag | null = null
@@ -524,17 +598,17 @@ function localX(e: PointerEvent) {
 
 function hitTest(x: number, y: number): Drag {
   const loop = loopFlagAt(x, y)
-  if (loop) return { kind: 'selectLoop', index: loop.index }
+  if (loop) return { kind: 'savedLoop', index: loop.index, which: loop.which, fromX: x, fromTime: loop.at, armed: false, moved: false }
   if (props.overview) return { kind: 'seek' }
   const handleTop = height.value * 0.55 - HANDLE_H / 2
   if (y >= handleTop && y <= handleTop + HANDLE_H) {
-    if (props.loopA != null && Math.abs(x - (xOf(props.loopA) - HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'a' }
-    if (props.loopB != null && Math.abs(x - (xOf(props.loopB) + HANDLE_W / 2)) < HANDLE_W / 2) return { kind: 'loop', which: 'b' }
+    if (props.loopA != null && Math.abs(x - (xOf(props.loopA) - HANDLE_W / 2)) <= HANDLE_W / 2)
+      return { kind: 'loop', which: 'a', fromX: x, fromTime: props.loopA }
+    if (props.loopB != null && Math.abs(x - (xOf(props.loopB) + HANDLE_W / 2)) <= HANDLE_W / 2)
+      return { kind: 'loop', which: 'b', fromX: x, fromTime: props.loopB }
   }
-  if (y <= FLAG_TOP + FLAG_H) {
-    const flag = markerFlags.find((f) => x >= f.x && x <= f.x + f.width)
-    if (flag) return { kind: 'marker', index: flag.index, fromX: x, armed: false, moved: false }
-  }
+  const flag = markerFlags.find((f) => y >= f.y && y <= f.y + f.height && x >= f.x && x <= f.x + f.width)
+  if (flag) return { kind: 'marker', index: flag.index, fromX: x, armed: false, moved: false }
   // on the zoomed view an empty press drags the wave under the centre playhead
   return props.draggable ? { kind: 'pan', fromX: x, fromPosition: props.position, moved: false } : { kind: 'seek' }
 }
@@ -547,24 +621,36 @@ function applyDrag(x: number) {
     if (drag.moved) emit('seek', clampTime(drag.fromPosition - travelled * secondsPerPixel.value))
     return
   }
-  if (drag.kind === 'marker' && !drag.armed) {
+  if ((drag.kind === 'marker' || drag.kind === 'savedLoop') && !drag.armed) {
     const grabbed = drag
     if (Math.abs(x - grabbed.fromX) <= TAP_SLOP) return // held still: wait for the hold
     // it moved first, so this was a scrub that happened to start on a flag, not a grab
     cancelHold()
     drag = props.draggable
-      ? { kind: 'pan', fromX: grabbed.fromX, fromPosition: props.markers[grabbed.index].at, moved: true }
+      ? { kind: 'pan', fromX: grabbed.fromX, fromPosition: props.position, moved: true }
       : { kind: 'seek' }
     return applyDrag(x)
   }
-  if (drag.kind === 'selectLoop') return emit('selectLoop', drag.index) // a press, not a drag
+  if (drag.kind === 'savedLoop') {
+    if (Math.abs(x - drag.fromX) <= TAP_SLOP) return
+    drag.moved = true
+    const loop = props.loops[drag.index]
+    const other = drag.which === 'a' ? loop.b : loop.a
+    const at = clampTime(drag.fromTime + (x - drag.fromX) * secondsPerPixel.value)
+    loopPreview = {
+      index: drag.index,
+      which: drag.which,
+      at: drag.which === 'a' ? Math.min(at, other - secondsPerPixel.value) : Math.max(at, other + secondsPerPixel.value),
+    }
+    return scheduleDraw()
+  }
   const seconds = clampTime(timeOf(x))
   if (drag.kind === 'seek') emit('seek', seconds)
   if (drag.kind === 'marker') {
     if (Math.abs(x - drag.fromX) > TAP_SLOP) drag.moved = true
     emit('moveMarker', drag.index, seconds)
   }
-  if (drag.kind === 'loop') emit('moveLoop', drag.which, seconds)
+  if (drag.kind === 'loop') emit('moveLoop', drag.which, clampTime(drag.fromTime + (x - drag.fromX) * secondsPerPixel.value))
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -579,18 +665,28 @@ function onPointerDown(e: PointerEvent) {
     const [a, b] = [...pointers.values()]
     pinchStart = { distance: Math.abs(a - b), span: span.value }
     cancelHold()
+    loopPreview = null
     drag = null
     return
   }
   const rect = wrapper.value!.getBoundingClientRect()
   drag = hitTest(localX(e), e.clientY - rect.top)
   if (drag.kind === 'marker') {
-    // A press on a flag goes to it; only holding picks it up. Moving on press is what made
-    // a tap meant as "take me back there" knock the marker off the place it was put.
-    emit('seek', clampTime(props.markers[drag.index].at))
     const grabbed = drag
-    holdTimer = setTimeout(() => ((grabbed.armed = true), (holdTimer = null)), HOLD_MS)
-  } else if (drag.kind !== 'pan') applyDrag(localX(e)) // a pan only acts once it actually moves
+    holdTimer = setTimeout(() => {
+      grabbed.armed = true
+      holdTimer = null
+      scheduleDraw()
+    }, HOLD_MS)
+  } else if (drag.kind === 'savedLoop') {
+    emit('selectLoop', drag.index)
+    const grabbed = drag
+    holdTimer = setTimeout(() => {
+      grabbed.armed = true
+      holdTimer = null
+      scheduleDraw()
+    }, HOLD_MS)
+  } else if (drag.kind !== 'pan' && drag.kind !== 'loop') applyDrag(localX(e)) // drags only act once they move
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -607,11 +703,14 @@ function onPointerMove(e: PointerEvent) {
 function onPointerUp(e: PointerEvent) {
   // a press that never moved is a tap: jump to the spot it landed on
   if (drag?.kind === 'pan' && !drag.moved) emit('seek', clampTime(timeOf(localX(e))))
-  // held on a flag and let go without dragging it anywhere: ask what kind it should be
-  if (drag?.kind === 'marker' && drag.armed && !drag.moved) emit('markerMenu', drag.index, xOf(props.markers[drag.index].at))
+  if (drag?.kind === 'marker' && !drag.moved) {
+    if (drag.armed) emit('markerMenu', drag.index, xOf(props.markers[drag.index].at))
+    else emit('seek', clampTime(props.markers[drag.index].at))
+  }
+  if (drag?.kind === 'savedLoop' && drag.moved && loopPreview) emit('moveSavedLoop', drag.index, drag.which, loopPreview.at)
   pointers.delete(e.pointerId)
   if (pointers.size < 2) pinchStart = null
-  if (pointers.size === 0) (cancelHold(), (drag = null))
+  if (pointers.size === 0) (cancelHold(), (drag = null), scheduleDraw())
 }
 
 function onWheel(e: WheelEvent) {

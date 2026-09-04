@@ -150,17 +150,40 @@ describe('WaveformCanvas drawing', () => {
     // the A and B handle boxes draw text too, and are not part of the list
     const loopLabels = () => callsOf('fillText').map((c) => c[1] as string).filter((l) => l !== 'A' && l !== 'B')
 
-    it('flags both ends of every loop, named, falling back to its number', async () => {
+    it('labels only the start of every loop, falling back to its number', async () => {
       await render({ overview: true, loops })
-      expect(loopLabels()).toEqual(['Chorus', 'Chorus', '2', '2'])
+      expect(loopLabels()).toEqual(['Chorus', '2'])
     })
 
-    it('faces the two flags of a loop inward, in the loop colour', async () => {
+    it('uses a compact unlabeled flag at the end', async () => {
       await render({ overview: true, loops: [loops[0]] })
-      // 'Chorus' measures 36, so the flag is 48 wide: it opens right from 2s and left from 4s
+      // 'Chorus' measures 36, so its start tab is 44px wide; the end is only 10px.
       const label = callsOf('fillText').filter((c) => c[1] === 'Chorus')
-      expect(label.map((c) => c[2])).toEqual([224, 376])
+      expect(label.map((c) => c[2])).toEqual([222])
       expect(callsOf('fill').filter((c) => c[1] === '#f59e0b')).toHaveLength(2)
+    })
+
+    it('stacks loops that start together on compact rows', async () => {
+      await render({ overview: true, loops: [{ a: 2, b: 4, name: 'Verse' }, { a: 2, b: 6, name: 'Chorus' }] })
+      const labels = callsOf('fillText').filter((c) => c[1] === 'Verse' || c[1] === 'Chorus')
+      expect(labels.map((c) => Number((c[3] as number).toFixed(2)))).toEqual([10.56, 29.56])
+    })
+
+    it('stacks normal and loop flags only when their pixel boxes overlap', async () => {
+      await render({ markers: [{ at: 2, name: 'M1' }, { at: 2.1, name: 'M2' }], loops: [{ a: 2.2, b: 4, name: 'L' }] })
+      const y = (label: string) => Number((callsOf('fillText').find((c) => c[1] === label)![3] as number).toFixed(2))
+      expect([y('M1'), y('M2'), y('L')]).toEqual([14.92, 42.92, 67.56])
+    })
+
+    it('stacks close times in the overview but aligns them when zoomed in', async () => {
+      const loopY = async (end: number) => {
+        ctx = recordingContext()
+        HTMLCanvasElement.prototype.getContext = vi.fn(() => ctx) as never
+        await render({ duration: 100, end, markers: [{ at: 2, name: 'M' }], loops: [{ a: 2.4, b: 8, name: 'L' }] })
+        return Number((callsOf('fillText').find((c) => c[1] === 'L')![3] as number).toFixed(2))
+      }
+      expect(await loopY(10)).toBe(11.56)
+      expect(await loopY(100)).toBe(39.56)
     })
 
     it('shows them on the zoomed view as well', async () => {
@@ -247,6 +270,8 @@ describe('WaveformCanvas drawing', () => {
 describe('WaveformCanvas interaction', () => {
   const down = (wrapper: ReturnType<typeof mount>, clientX: number, clientY = HEIGHT / 2) =>
     wrapper.find('.waveform').trigger('pointerdown', { clientX, clientY, pointerId: 1 })
+  const up = (wrapper: ReturnType<typeof mount>, clientX: number, clientY = HEIGHT / 2) =>
+    wrapper.find('.waveform').trigger('pointerup', { clientX, clientY, pointerId: 1 })
 
   beforeEach(() => {
     Element.prototype.setPointerCapture = vi.fn()
@@ -268,12 +293,14 @@ describe('WaveformCanvas interaction', () => {
     it('jumps to the marker rather than moving it', async () => {
       const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }] })
       await onFlag(wrapper)
+      expect(wrapper.emitted('seek')).toBeUndefined()
+      await up(wrapper, 505, 10)
       expect(wrapper.emitted('seek')![0]).toEqual([5])
       expect(wrapper.emitted('moveMarker')).toBeUndefined()
     })
 
     it('picks the marker up once the press has been held', async () => {
-      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true })
+      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true, position: 5 })
       vi.useFakeTimers()
       await onFlag(wrapper)
       await drag(wrapper, 507) // still inside the slop, so the hold survives it
@@ -285,8 +312,21 @@ describe('WaveformCanvas interaction', () => {
       expect(wrapper.emitted('moveMarker')!.at(-1)).toEqual([1, 7])
     })
 
-    it('scrubs instead when the press moves before the hold lands', async () => {
+    it('opens the popover after a hold without jumping', async () => {
       const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true })
+      vi.useFakeTimers()
+      await onFlag(wrapper)
+      await vi.advanceTimersByTimeAsync(400)
+      vi.useRealTimers()
+      expect(callsOf('stroke').some((c) => c[1] === '#fff' && c[2] === 2)).toBe(true)
+      expect(callsOf('fillText').filter((c) => c[1] === '2').at(-1)![3]).toBeCloseTo(11.92)
+      await up(wrapper, 505, 10)
+      expect(wrapper.emitted('markerMenu')![0]).toEqual([1, 500])
+      expect(wrapper.emitted('seek')).toBeUndefined()
+    })
+
+    it('scrubs instead when the press moves before the hold lands', async () => {
+      const wrapper = await render({ markers: [{ at: 1 }, { at: 5 }], draggable: true, position: 5 })
       await onFlag(wrapper)
       await drag(wrapper, 605) // 100 px right, so the wave goes one second back under it
       expect(wrapper.emitted('moveMarker')).toBeUndefined()
@@ -294,10 +334,12 @@ describe('WaveformCanvas interaction', () => {
     })
   })
 
-  it('drags the A handle when its box is pressed', async () => {
+  it('drags an A/B handle without jumping it on press', async () => {
     const wrapper = await render({ loopA: 4, loopB: 8 })
-    await down(wrapper, 385, HEIGHT * 0.55) // the A box sits to the left of x=400
-    expect(wrapper.emitted('moveLoop')![0]).toEqual(['a', 3.85])
+    await down(wrapper, 385, HEIGHT * 0.55) // centre of the A box, 15px left of its boundary
+    expect(wrapper.emitted('moveLoop')).toBeUndefined()
+    await wrapper.find('.waveform').trigger('pointermove', { clientX: 485, clientY: HEIGHT * 0.55, pointerId: 1 })
+    expect(wrapper.emitted('moveLoop')![0]).toEqual(['a', 5])
   })
 
   it('zooms the window on wheel', async () => {
@@ -310,15 +352,42 @@ describe('WaveformCanvas interaction', () => {
 
   it('selects a loop when one of its flags is pressed, and seeks anywhere else', async () => {
     const wrapper = await render({ overview: true, loops: [{ a: 2, b: 4, name: 'Chorus' }] })
-    await down(wrapper, 210, 40) // the start flag sits at x 200..248, y 30..56
+    await down(wrapper, 210, 10) // every unstacked flag begins on the top row
     expect(wrapper.emitted('selectLoop')![0]).toEqual([0])
     expect(wrapper.emitted('seek')).toBeUndefined()
+    await up(wrapper, 210, 10)
 
-    await down(wrapper, 390, 40) // the end flag opens the other way, x 352..400
+    await down(wrapper, 395, 10) // the compact end flag uses that row too
     expect(wrapper.emitted('selectLoop')![1]).toEqual([0])
+    await up(wrapper, 395, 10)
 
     await down(wrapper, 210, 100) // the same column, below the flags
     expect(wrapper.emitted('seek')![0]).toEqual([2.1])
+  })
+
+  it('selects stacked loops independently from either end', async () => {
+    const wrapper = await render({ overview: true, loops: [{ a: 2, b: 4 }, { a: 2, b: 6 }] })
+    await down(wrapper, 210, 30) // second start row
+    await up(wrapper, 210, 30)
+    await down(wrapper, 595, 10) // its end has room on the first row
+    await up(wrapper, 595, 10)
+    expect(wrapper.emitted('selectLoop')).toEqual([[1], [1]])
+  })
+
+  it.each([
+    { which: 'a', downAt: 210, moveTo: 310, expected: 3 },
+    { which: 'b', downAt: 395, moveTo: 495, expected: 5 },
+  ] as const)('holds, lifts and drags the saved-loop $which flag', async ({ which, downAt, moveTo, expected }) => {
+    const wrapper = await render({ overview: true, loops: [{ a: 2, b: 4, name: 'Chorus' }] })
+    vi.useFakeTimers()
+    await down(wrapper, downAt, 10)
+    await vi.advanceTimersByTimeAsync(400)
+    vi.useRealTimers()
+    expect(callsOf('stroke').some((c) => c[1] === '#fff' && c[2] === 2)).toBe(true)
+    if (which === 'a') expect(callsOf('fillText').filter((c) => c[1] === 'Chorus').at(-1)![3]).toBeCloseTo(7.56)
+    await wrapper.find('.waveform').trigger('pointermove', { clientX: moveTo, clientY: 10, pointerId: 1 })
+    await wrapper.find('.waveform').trigger('pointerup', { clientX: moveTo, clientY: 10, pointerId: 1 })
+    expect(wrapper.emitted('moveSavedLoop')![0]).toEqual([0, which, expected])
   })
 
   it('ignores the wheel on the overview strip', async () => {
@@ -382,7 +451,7 @@ describe('WaveformCanvas interaction', () => {
       vi.useRealTimers()
       await move(wrapper, 605)
       expect(wrapper.emitted('moveMarker')!.at(-1)).toEqual([0, 6.05])
-      expect(wrapper.emitted('seek')).toEqual([[5]]) // the press itself, and nothing panned
+      expect(wrapper.emitted('seek')).toBeUndefined()
     })
   })
 

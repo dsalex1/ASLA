@@ -118,6 +118,10 @@ await setDoc(doc(db, 'songs', 'test-song'), {
       peaksRef: 'audio/test-song.peaks',
       duration: wav.seconds,
       markers: [12, 30],
+      loops: [
+        { a: 10, b: 20, name: 'Verse' },
+        { a: 10, b: 40, name: 'Chorus' },
+      ],
     },
   ],
   hashes,
