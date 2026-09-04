@@ -10,8 +10,13 @@ import { deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore'
 import { ref } from 'vue'
 import { useCollection } from 'vuefire'
 import { auth } from '@/plugins/firebase'
+import { useAuth } from '@/stores/auth'
 
 const users = useCollection(userCollection)
+// An admin who demoted or revoked themselves would be locked out of this page, and with
+// no admin left nobody could put it back: the rules let only an admin write these.
+const authStore = useAuth()
+const isSelf = (user: UserProfile) => user.id === authStore.user?.uid
 const setlists = useCollection(setlistCollection)
 
 const error = ref('')
@@ -44,7 +49,8 @@ async function createUser() {
   }
 }
 
-const setRole = (user: UserProfile, role: Role) => updateDoc(doc(userCollection, user.id!), { role })
+const setRole = (user: UserProfile, role: Role) =>
+  isSelf(user) ? undefined : updateDoc(doc(userCollection, user.id!), { role })
 
 const setSetlists = (user: UserProfile, ids: string[]) => updateDoc(doc(userCollection, user.id!), { setlists: ids })
 
@@ -54,6 +60,7 @@ const setSetlists = (user: UserProfile, ids: string[]) => updateDoc(doc(userColl
  * console, as no client may delete an account other than its own.
  */
 async function revoke(user: UserProfile) {
+  if (isSelf(user)) return
   if (!confirm(`Remove ${user.email}'s access? They will no longer see any setlist.`)) return
   await deleteDoc(doc(userCollection, user.id!))
 }
@@ -117,7 +124,11 @@ async function resetPassword(user: UserProfile) {
     <v-card v-for="user in users" :key="user.id" class="mb-3">
       <v-card-title class="d-flex align-center flex-wrap ga-2">
         <span class="text-body-1 text-truncate" style="flex: 1 1 200px; min-width: 0">{{ user.email }}</span>
+        <!-- your own row shows the role rather than offering it: a disabled toggle greys
+             both halves, and then you cannot even read which one you are -->
+        <v-chip v-if="isSelf(user)" size="small" color="primary" variant="flat">{{ user.role }}</v-chip>
         <v-btn-toggle
+          v-else
           :model-value="user.role"
           density="compact"
           variant="outlined"
@@ -129,9 +140,17 @@ async function resetPassword(user: UserProfile) {
           <v-btn value="admin" size="small">admin</v-btn>
         </v-btn-toggle>
         <v-btn size="small" variant="text" prepend-icon="fas fa-key" @click="resetPassword(user)">Reset password</v-btn>
-        <v-btn size="small" variant="text" color="error" prepend-icon="fas fa-user-slash" @click="revoke(user)">
+        <v-btn
+          v-if="!isSelf(user)"
+          size="small"
+          variant="text"
+          color="error"
+          prepend-icon="fas fa-user-slash"
+          @click="revoke(user)"
+        >
           Revoke
         </v-btn>
+        <span v-else class="text-grey text-caption">that's you</span>
       </v-card-title>
       <v-card-text>
         <v-select
