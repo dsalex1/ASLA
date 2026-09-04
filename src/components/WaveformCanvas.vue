@@ -23,6 +23,11 @@ const props = withDefaults(
     overview?: boolean
     /** the zoomed view: the wave is dragged under a fixed centre playhead */
     draggable?: boolean
+    /** whether a flag can be picked up at all. A read-only account cannot save where one
+     * was moved to, so it must not be able to move one: a flag that springs back is worse
+     * than one that never lifts. Pressing them still selects the loop or jumps to the
+     * marker, and dragging from one scrubs, which is what the press would otherwise do. */
+    editable?: boolean
     /** monitoring: the gain wave is a pure stretch of the source and needs no playing,
      * the other two are measured and fill in as the track plays */
     monitor?: boolean
@@ -36,7 +41,7 @@ const props = withDefaults(
      * flattened against the edge */
     headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, loopActive: true, loops: () => [], ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
+  { loopA: null, loopB: null, loopActive: true, loops: () => [], editable: true, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
 )
 
 const emit = defineEmits<{
@@ -671,21 +676,17 @@ function onPointerDown(e: PointerEvent) {
   }
   const rect = wrapper.value!.getBoundingClientRect()
   drag = hitTest(localX(e), e.clientY - rect.top)
-  if (drag.kind === 'marker') {
+  if (drag.kind === 'savedLoop') emit('selectLoop', drag.index)
+  if (drag.kind === 'marker' || drag.kind === 'savedLoop') {
+    // holding a flag picks it up. Without the right to save where it lands it is never
+    // picked up, so the press stays a press and a drag from it scrubs like anywhere else.
     const grabbed = drag
-    holdTimer = setTimeout(() => {
-      grabbed.armed = true
-      holdTimer = null
-      scheduleDraw()
-    }, HOLD_MS)
-  } else if (drag.kind === 'savedLoop') {
-    emit('selectLoop', drag.index)
-    const grabbed = drag
-    holdTimer = setTimeout(() => {
-      grabbed.armed = true
-      holdTimer = null
-      scheduleDraw()
-    }, HOLD_MS)
+    if (props.editable)
+      holdTimer = setTimeout(() => {
+        grabbed.armed = true
+        holdTimer = null
+        scheduleDraw()
+      }, HOLD_MS)
   } else if (drag.kind !== 'pan' && drag.kind !== 'loop') applyDrag(localX(e)) // drags only act once they move
 }
 
