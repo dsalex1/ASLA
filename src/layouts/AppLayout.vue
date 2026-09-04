@@ -8,9 +8,11 @@ import { useDisplay } from 'vuetify'
 
 const auth = useAuth()
 const { isAdmin } = useAccess()
-// a phone has no room for three labels next to the logo, and logout is the one that must
-// never be the button pushed off the end
-const { mobile } = useDisplay()
+// Only a phone-width screen is short of room for three labels next to the logo, and
+// logout is the one that must never be the button pushed off the end. `mobile` breaks at
+// lg, which is far wider than that; xs is the same split the setlist grid goes two-across
+// at, which is about where the bar actually runs out of room.
+const { xs } = useDisplay()
 
 // the beta tag belongs to the beta channel only: a production build stamps nothing and
 // shows the bare version
@@ -30,12 +32,12 @@ const version = `V${__APP_VERSION__}${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` 
       <RouterLink v-if="isAdmin" to="/users" class="me-2 flex-shrink-0">
         <!-- VBtn ignores the `icon` prop's glyph when a default slot exists at all, so the
              icon-only variant has to be its own element -->
-        <v-btn v-if="mobile" icon="fas fa-users" color="white" variant="text" density="comfortable" title="Users" />
+        <v-btn v-if="xs" icon="fas fa-users" color="white" variant="text" density="comfortable" title="Users" />
         <v-btn v-else prepend-icon="fas fa-users" color="white" variant="text">users</v-btn>
       </RouterLink>
       <span class="me-2 text-truncate" style="min-width: 0">{{ auth.user?.email }}</span>
       <v-btn
-        v-if="mobile"
+        v-if="xs"
         class="flex-shrink-0"
         icon="fas fa-sign-out"
         color="white"
