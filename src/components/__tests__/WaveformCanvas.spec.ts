@@ -152,7 +152,14 @@ describe('WaveformCanvas drawing', () => {
 
     it('labels only the start of every loop, falling back to its number', async () => {
       await render({ overview: true, loops })
-      expect(loopLabels()).toEqual(['Chorus', '2'])
+      // the named one is out of the count, so the unnamed one is the first number
+      expect(loopLabels()).toEqual(['Chorus', '1'])
+    })
+
+    it('numbers the unnamed loops through the track, not in the order they were saved', async () => {
+      await render({ overview: true, loops: [{ a: 6, b: 8 }, { a: 2, b: 4 }] })
+      // drawn left to right, so the earlier loop comes first and is the one numbered 1
+      expect(loopLabels()).toEqual(['1', '2'])
     })
 
     it('uses a compact unlabeled flag at the end', async () => {

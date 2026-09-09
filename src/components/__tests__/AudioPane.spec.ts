@@ -294,18 +294,11 @@ describe('AudioPane A-B repeat', () => {
     expect([engine.loopA.value, engine.loopB.value]).toEqual([12, 30])
   })
 
-  it('snaps to a marker within a second', async () => {
+  it('leaves A where it was put, marker close by or not', async () => {
     const wrapper = await mountPane([track({ markers: [12] })])
     engine.currentTime.value = 12.6
     await press(wrapper, 'A')
-    expect(engine.loopA.value).toBe(12)
-  })
-
-  it('does not snap to a marker further away than that', async () => {
-    const wrapper = await mountPane([track({ markers: [12] })])
-    engine.currentTime.value = 14
-    await press(wrapper, 'A')
-    expect(engine.loopA.value).toBe(14)
+    expect(engine.loopA.value).toBe(12.6)
   })
 
   it('drops the other bound when the new one would invert the region', async () => {

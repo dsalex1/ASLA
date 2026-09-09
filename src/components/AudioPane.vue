@@ -4,6 +4,7 @@ import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAccess } from '@/composables/useAccess'
 import { useAudioEngine } from '@/composables/useAudioEngine'
+import { autoNumbers } from '@/helpers/autoNumber'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { audioBytes, loadPeaks } from '@/helpers/audioTracks'
 import { estimateLag, Reading } from '@/helpers/levelAlign'
@@ -35,7 +36,6 @@ const emit = defineEmits<{
 const view = defineModel<PaneView>('view', { required: true })
 
 const SKIP = 10 // seconds for the two skip buttons
-const SNAP = 1 // A/B snap to a marker this close
 const MARKER_HIT = 0.3 // pressing the marker button this close to one removes it instead
 const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const RESTART_WINDOW = 3 // pressing |<< after this many seconds restarts instead of going back a song
@@ -158,17 +158,6 @@ watch(
 )
 
 // --- markers ---
-const nearestMarker = (seconds: number) =>
-  markers.value.reduce<number | null>(
-    (best, m) => (best == null || Math.abs(m.at - seconds) < Math.abs(best - seconds) ? m.at : best),
-    null
-  )
-
-function snap(seconds: number) {
-  const nearest = nearestMarker(seconds)
-  return nearest != null && Math.abs(nearest - seconds) <= SNAP ? nearest : seconds
-}
-
 const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m.at - currentTime.value) <= MARKER_HIT))
 
 const sorted = (list: Marker[]) => [...list].sort((a, b) => a.at - b.at)
@@ -197,6 +186,10 @@ onClickOutside(markerMenuAnchor, () => (markerMenu.value = null))
 watch(trackKey, () => (markerMenu.value = null)) // it belongs to a flag on the track that left
 
 const heldMarker = computed((): Marker | undefined => (markerMenu.value ? markers.value[markerMenu.value.index] : undefined))
+
+/** what the flags show while a marker or a loop has no name of its own */
+const markerNumbers = computed(() => autoNumbers(markers.value))
+const loopNumbers = computed(() => autoNumbers(loops.value.map((l) => ({ at: l.a, name: l.name }))))
 
 /** what is left of a marker once its empty fields are dropped: Firestore rejects undefined */
 const tidy = (m: Marker): Marker => ({ at: m.at, ...(m.name ? { name: m.name } : {}), ...(m.skip ? { skip: true } : {}) })
@@ -294,13 +287,12 @@ const jumpMarker = (direction: -1 | 1) => {
 
 function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   if (!Number.isFinite(seconds)) return
-  const at = snap(seconds)
   if (which === 'a') {
-    loopA.value = at
-    if (loopB.value != null && loopB.value <= at) loopB.value = null
+    loopA.value = seconds
+    if (loopB.value != null && loopB.value <= seconds) loopB.value = null
   } else {
-    loopB.value = at
-    if (loopA.value != null && loopA.value >= at) loopA.value = null
+    loopB.value = seconds
+    if (loopA.value != null && loopA.value >= seconds) loopA.value = null
   }
 }
 
@@ -322,11 +314,10 @@ function selectLoop(index: number) {
 function moveSavedLoop(index: number, which: 'a' | 'b', seconds: number) {
   const loop = loops.value[index]
   if (!loop || !Number.isFinite(seconds)) return
-  const at = snap(seconds)
-  if ((which === 'a' && at >= loop.b) || (which === 'b' && at <= loop.a)) return
+  if ((which === 'a' && seconds >= loop.b) || (which === 'b' && seconds <= loop.a)) return
   const selected = selectedLoop.value === index
-  saveTrack({ loops: loops.value.map((saved, i) => (i === index ? { ...saved, [which]: at } : saved)) })
-  if (selected) (which === 'a' ? loopA : loopB).value = at
+  saveTrack({ loops: loops.value.map((saved, i) => (i === index ? { ...saved, [which]: seconds } : saved)) })
+  if (selected) (which === 'a' ? loopA : loopB).value = seconds
 }
 
 /** drop the saved loop the A-B stands on; the A-B itself stays where it is */
@@ -560,7 +551,7 @@ defineExpose({ position: currentTime })
         <input
           v-model.lazy="markerName"
           class="loop-name"
-          :placeholder="`Marker ${markerMenu.index + 1}`"
+          :placeholder="`Marker ${markerNumbers[markerMenu.index] ?? ''}`"
           aria-label="Name this marker"
         />
         <button
@@ -696,7 +687,7 @@ defineExpose({ position: currentTime })
           v-model.lazy="loopName"
           class="loop-name"
           :disabled="!currentLoop || !canWrite"
-          :placeholder="currentLoop ? `Loop ${selectedLoop + 1}` : 'No loop'"
+          :placeholder="currentLoop ? `Loop ${loopNumbers[selectedLoop] ?? ''}` : 'No loop'"
           aria-label="Name this loop"
         />
         <button
