@@ -239,7 +239,7 @@ async function addAudioTrack(song: Song, file?: File) {
     await saveSong(song)
   } catch (e) {
     console.error('Failed to add audio track:', e)
-    alert('Failed to add audio track - could the file not be decoded?')
+    alert(`Failed to add audio track: ${(e as Error).message ?? e}`)
   }
   audioUploading.value = false
 }
