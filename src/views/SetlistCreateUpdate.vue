@@ -169,14 +169,14 @@ const folderTree = computed(() => {
 
 <template>
   <AppLayout>
-    <h2 class="d-flex">
+    <h2 class="d-flex flex-wrap align-center ga-2 mb-2">
       <Backbutton :to="HOME_ROUTE" />
-      <div style="flex: 1">{{ formMode == 'create' ? 'Create' : 'Update' }} Setlist</div>
-      <div class="d-flex flex-wrap justify-end ga-3">
-        <v-btn v-if="formMode == 'edit'" @click="deleteSetlist" color="error" class="ms-2" prepend-icon="fas fa-trash">
+      <div class="flex-grow-1">{{ formMode == 'create' ? 'Create' : 'Update' }} Setlist</div>
+      <div class="d-flex flex-wrap justify-end ga-2 ms-auto">
+        <v-btn v-if="formMode == 'edit'" @click="deleteSetlist" color="error" prepend-icon="fas fa-trash">
           Delete
         </v-btn>
-        <v-btn :loading="loading" color="primary" @click="createSetlist" prepend-icon="fas fa-save" class="ms-2 mb-2">
+        <v-btn :loading="loading" color="primary" @click="createSetlist" prepend-icon="fas fa-save">
           {{ formMode == 'create' ? 'Create' : 'Update' }}
         </v-btn>
       </div>

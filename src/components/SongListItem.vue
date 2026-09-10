@@ -21,12 +21,13 @@ function formatDuration(duration?: number) {
 </script>
 
 <template>
-  <v-list-item color="primary">
+  <v-list-item color="primary" class="song-list-item">
     <div class="d-flex align-center" v-if="song && 'name' in song">
-      <v-chip style="width: 32px" class="justify-center me-2">{{ index }}</v-chip>
-      <div class="d-inline-flex flex-wrap">
+      <v-chip style="width: 32px" class="justify-center me-2 flex-shrink-0">{{ index }}</v-chip>
+      <div class="song-details d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
         <div class="text-grey me-2" v-html="getSongInformation(song)" />
+        <span v-if="song.duration" class="song-duration d-sm-none text-grey ms-auto">{{ formatDuration(song.duration) }}</span>
       </div>
     </div>
     <slot>
@@ -44,10 +45,10 @@ function formatDuration(duration?: number) {
         icon="fas fa-cloud-arrow-down"
         size="x-small"
         color="warning"
-        class="me-2"
+        class="me-2 d-none d-sm-inline-flex"
         title="Not available offline"
       />
-      <span v-if="song && 'name' in song && song.duration" class="bg-grey text-white rounded px-1">
+      <span v-if="song && 'name' in song && song.duration" class="d-none d-sm-inline-block bg-grey text-white rounded px-1">
         <v-icon size="sm" icon="far fa-clock mb-1 " />
         {{ formatDuration(song.duration) }}
       </span>
@@ -63,3 +64,20 @@ function formatDuration(duration?: number) {
     </template>
   </v-list-item>
 </template>
+
+<style scoped>
+.song-details {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.song-duration {
+  white-space: nowrap;
+  align-self: center;
+}
+@media (max-width: 599px) {
+  .song-list-item { padding-inline: 8px; }
+  .song-list-item :deep(.v-list-item__spacer) { width: 4px; }
+  .song-list-item :deep(.v-btn) { width: 36px; margin-inline-end: 0 !important; }
+}
+</style>
