@@ -26,8 +26,8 @@ function formatDuration(duration?: number) {
       <v-chip style="width: 32px" class="justify-center me-2 flex-shrink-0">{{ index }}</v-chip>
       <div class="song-details d-inline-flex flex-wrap">
         <div class="me-1">{{ song?.name }}</div>
-        <div class="text-grey me-2" v-html="getSongInformation(song)" />
-        <span v-if="song.duration" class="song-duration d-sm-none text-grey ms-auto">{{ formatDuration(song.duration) }}</span>
+        <div class="song-information text-grey me-2" v-html="getSongInformation(song)" />
+        <span v-if="song.duration" class="song-duration d-sm-none bg-grey text-white rounded px-1">{{ formatDuration(song.duration) }}</span>
       </div>
     </div>
     <slot>
@@ -76,6 +76,9 @@ function formatDuration(duration?: number) {
   align-self: center;
 }
 @media (max-width: 599px) {
+  .song-details { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px; }
+  .song-information { grid-column: 1 / -1; grid-row: 2; }
+  .song-duration { grid-column: 2; grid-row: 1; align-self: start; }
   .song-list-item { padding-inline: 8px; }
   .song-list-item :deep(.v-list-item__spacer) { width: 4px; }
   .song-list-item :deep(.v-btn) { width: 36px; margin-inline-end: 0 !important; }
