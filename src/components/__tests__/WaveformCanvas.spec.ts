@@ -477,6 +477,79 @@ describe('WaveformCanvas interaction', () => {
       expect(wrapper.emitted('seek')!.at(-1)).toEqual([0])
     })
 
+    describe('flicking', () => {
+      let now = 0
+      let frames: FrameRequestCallback[] = []
+      beforeEach(() => {
+        now = 1000
+        frames = []
+        vi.spyOn(performance, 'now').mockImplementation(() => now)
+        vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => (frames.push(cb), frames.length))
+        vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => void (frames = []))
+      })
+      const runFrames = (count: number) => {
+        for (let i = 0; i < count && frames.length; i++) {
+          now += 16
+          frames.shift()!(now)
+        }
+      }
+      /** drag from 500 to `to` over `ms`, in 16ms moves, and let go at once */
+      const flick = async (wrapper: ReturnType<typeof mount>, to: number, ms = 48) => {
+        await down(wrapper, 500)
+        const moves = ms / 16
+        for (let i = 1; i <= moves; i++) {
+          now += 16
+          await move(wrapper, 500 + ((to - 500) * i) / moves)
+        }
+        await up(wrapper, to)
+      }
+
+      it('keeps the wave coasting the way it was thrown, slowing down', async () => {
+        const wrapper = await render({ draggable: true, position: 5, start: 0, end: 10 })
+        await flick(wrapper, 400) // leftwards, so forwards through the track
+        const released = wrapper.emitted('seek')!.length
+        runFrames(6) // a redraw may be queued among them
+        const coasted = wrapper.emitted('seek')!.slice(released).map(([t]) => t as number)
+        expect(coasted.length).toBeGreaterThanOrEqual(3)
+        // each frame reads the position afresh, which in the test stays at 5
+        expect(coasted.every((t) => t > 5)).toBe(true)
+        expect(coasted[0] - 5).toBeGreaterThan(coasted[2] - 5)
+      })
+
+      it('comes to a stop by itself', async () => {
+        const wrapper = await render({ draggable: true, position: 5, start: 0, end: 10 })
+        await flick(wrapper, 400)
+        runFrames(1000)
+        const settled = wrapper.emitted('seek')!.length
+        runFrames(10)
+        expect(frames).toHaveLength(0)
+        expect(wrapper.emitted('seek')!.length).toBe(settled)
+      })
+
+      it('does not coast after a drag that was held still before letting go', async () => {
+        const wrapper = await render({ draggable: true, position: 5, start: 0, end: 10 })
+        await down(wrapper, 500)
+        now += 16
+        await move(wrapper, 400)
+        now += 200
+        await up(wrapper, 400)
+        const released = wrapper.emitted('seek')!.length
+        runFrames(10)
+        expect(wrapper.emitted('seek')!.length).toBe(released)
+      })
+
+      it('is caught by a press, which does not seek to where it landed', async () => {
+        const wrapper = await render({ draggable: true, position: 5, start: 0, end: 10 })
+        await flick(wrapper, 400)
+        runFrames(1)
+        const before = wrapper.emitted('seek')!.length
+        await down(wrapper, 300)
+        await up(wrapper, 300)
+        runFrames(5)
+        expect(wrapper.emitted('seek')!.length).toBe(before)
+      })
+    })
+
     it('a held flag is still a grab rather than a pan', async () => {
       const wrapper = await render({ draggable: true, markers: [{ at: 5 }], position: 5, start: 0, end: 10 })
       vi.useFakeTimers()

@@ -1,12 +1,13 @@
 import AudioPane from '@/components/AudioPane.vue'
 import JogStrip from '@/components/JogStrip.vue'
+import LoopMarkerList from '@/components/LoopMarkerList.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { shownView } from '@/helpers/paneViews'
 import { AudioTrack, Marker, PaneView, Song } from '@/types'
 import { flushPromises, mount } from '@vue/test-utils'
 import { updateDoc } from 'firebase/firestore'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { Ref, ref } from 'vue'
 
 const engine = {
   currentTime: ref(0),
@@ -833,5 +834,76 @@ describe('AudioPane loop stepping', () => {
     const wrapper = await mountPane()
     await setAB(wrapper, 5, null)
     expect(button(wrapper, 'Step forward one selection').attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('AudioPane loop and marker list', () => {
+  const list = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(LoopMarkerList)
+  const rows = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('.lm-row').map((r) => r.find('.lm-label').text())
+
+  it('comes with the loop controls, folded away', async () => {
+    localStorage.clear()
+    const wrapper = mount(AudioPane, { props: paneProps(song([track()])) })
+    await flushPromises()
+    expect(list(wrapper).exists()).toBe(false)
+
+    await button(wrapper, 'Show loop controls').trigger('click')
+    expect(list(wrapper).exists()).toBe(true)
+    expect(wrapper.find('.lm-panel').exists()).toBe(false)
+    expect(button(wrapper, 'Show loops and markers')).toBeTruthy()
+  })
+
+  it('lists the loops first, in the order they play, then the markers', async () => {
+    const wrapper = await mountPane([
+      track({ markers: [{ at: 5, name: 'Verse' }, { at: 30 }], loops: [{ a: 40, b: 50, name: 'Solo' }, { a: 10, b: 20 }] }),
+    ])
+    await button(wrapper, 'Show loops and markers').trigger('click')
+    expect(rows(wrapper)).toEqual(['Loop 1', 'Solo', 'Verse', 'Marker 1'])
+  })
+
+  it('puts the A-B on a loop picked from it, and the playhead at its start', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 40, b: 50 }] })])
+    await button(wrapper, 'Show loops and markers').trigger('click')
+    await wrapper.find('.lm-pick').trigger('click')
+    expect([engine.loopA.value, engine.loopB.value]).toEqual([40, 50])
+    expect(engine.seek).toHaveBeenLastCalledWith(40)
+  })
+
+  it('renames and deletes a loop', async () => {
+    const wrapper = await mountPane([track({ loops: [{ a: 10, b: 20 }, { a: 40, b: 50 }] })])
+    await button(wrapper, 'Show loops and markers').trigger('click')
+    list(wrapper).vm.$emit('renameLoop', 1, ' Bridge ')
+    expect(writtenTracks()[0].loops).toEqual([{ a: 10, b: 20 }, { a: 40, b: 50, name: 'Bridge' }])
+
+    list(wrapper).vm.$emit('deleteLoop', 0)
+    expect(writtenTracks()[0].loops).toEqual([{ a: 40, b: 50 }])
+  })
+
+  it('renames a marker in place and deletes one', async () => {
+    const wrapper = await mountPane([track({ markers: [{ at: 5 }, { at: 30, skip: true }] })])
+    await button(wrapper, 'Show loops and markers').trigger('click')
+    await wrapper.findAll('button').filter((b) => b.attributes('aria-label') === 'Rename marker')[0].trigger('click')
+    const field = wrapper.find('input[aria-label="Marker name"]')
+    await field.setValue('Intro')
+    await field.trigger('keydown', { key: 'Enter' })
+    expect(markersOf(wrapper)).toEqual([{ at: 5, name: 'Intro' }, { at: 30, skip: true }])
+
+    await wrapper.findAll('button').filter((b) => b.attributes('aria-label') === 'Delete marker')[1].trigger('click')
+    expect(markersOf(wrapper)).toEqual([{ at: 5, name: 'Intro' }])
+  })
+
+  it('offers no renaming or deleting to a read-only account', async () => {
+    // the setup mocks the role with a plain ref, which the real computed's type hides
+    const isAdmin = (await import('@/composables/useAccess')).isAdmin as unknown as Ref<boolean>
+    isAdmin.value = false
+    try {
+      const wrapper = await mountPane([track({ markers: [{ at: 5 }], loops: [{ a: 10, b: 20 }] })])
+      await button(wrapper, 'Show loops and markers').trigger('click')
+      expect(rows(wrapper)).toHaveLength(2)
+      for (const label of ['Rename loop', 'Delete loop', 'Rename marker', 'Delete marker'])
+        expect(button(wrapper, label)).toBeUndefined()
+    } finally {
+      isAdmin.value = true
+    }
   })
 })

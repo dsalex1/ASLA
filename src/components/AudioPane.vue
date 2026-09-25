@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import JogStrip from '@/components/JogStrip.vue'
+import LoopMarkerList from '@/components/LoopMarkerList.vue'
 import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { useAccess } from '@/composables/useAccess'
@@ -210,6 +211,12 @@ const markerName = computed({
   set: (value: string) => markerMenu.value && patchMarker(markerMenu.value.index, { name: value.trim() }),
 })
 
+function deleteMarker(index: number) {
+  if (!canWrite.value) return
+  markers.value = markers.value.filter((_, i) => i !== index)
+  markerMenu.value = null // it may have been open on this one, or on one that has now moved up
+}
+
 /** where a skip lands: the next marker, or the one after that when it is a skip as well */
 function afterSkip(from: number): number {
   const next = markers.value.find((m) => m.at > from)
@@ -320,22 +327,23 @@ function moveSavedLoop(index: number, which: 'a' | 'b', seconds: number) {
   if (selected) (which === 'a' ? loopA : loopB).value = seconds
 }
 
-/** drop the saved loop the A-B stands on; the A-B itself stays where it is */
-function deleteLoop() {
-  if (selectedLoop.value < 0) return
-  saveTrack({ loops: loops.value.filter((_, i) => i !== selectedLoop.value) })
+/** drop a saved loop; an A-B standing on it stays where it is */
+function deleteLoopAt(index: number) {
+  if (!loops.value[index]) return
+  saveTrack({ loops: loops.value.filter((_, i) => i !== index) })
 }
 
-/** typed into the loop row; an empty name puts the loop back to being shown by number */
+/** an empty name puts the loop back to being shown by number */
+function renameLoop(index: number, value: string) {
+  if (!loops.value[index]) return
+  const name = value.trim()
+  saveTrack({ loops: loops.value.map((l, i) => (i === index ? { a: l.a, b: l.b, ...(name ? { name } : {}) } : l)) })
+}
+
+/** typed into the loop row, which acts on the loop the A-B stands on */
 const loopName = computed({
   get: () => currentLoop.value?.name ?? '',
-  set: (value: string) => {
-    if (selectedLoop.value < 0) return
-    const name = value.trim()
-    saveTrack({
-      loops: loops.value.map((l, i) => (i === selectedLoop.value ? { a: l.a, b: l.b, ...(name ? { name } : {}) } : l)),
-    })
-  },
+  set: (value: string) => renameLoop(selectedLoop.value, value),
 })
 
 // hiding the loop controls also stops the loop: the region stays, greyed out, but the
@@ -344,6 +352,17 @@ const loopBarOpen = useLocalStorage('audio.loopBar', false)
 watch(loopBarOpen, (open) => (engine.loopEnabled.value = open), { immediate: true })
 
 const hasLoop = computed(() => loopA.value != null && loopB.value != null)
+
+// the list of loops and markers comes with the loop controls, folded away until asked for
+const listOpen = ref(false)
+watch(loopBarOpen, (open) => open || (listOpen.value = false))
+
+/** picked from the list: the A-B goes onto the loop, and the playhead to its start */
+function goToLoop(index: number) {
+  selectLoop(index)
+  const loop = loops.value[index]
+  if (loop) engine.seek(loop.a)
+}
 
 /** step the whole selection one selection-length forward or back, so you can walk the track */
 function stepLoop(direction: -1 | 1) {
@@ -546,6 +565,22 @@ defineExpose({ position: currentTime })
         @zoom="zoom"
       />
 
+      <LoopMarkerList
+        v-if="hasAudio && !showsSlot && loopBarOpen"
+        v-model:open="listOpen"
+        :loops="loops"
+        :markers="markers"
+        :selectedLoop="selectedLoop"
+        :position="currentTime"
+        :editable="canWrite"
+        @selectLoop="goToLoop"
+        @renameLoop="renameLoop"
+        @deleteLoop="deleteLoopAt"
+        @seek="engine.seek"
+        @renameMarker="(index, name) => patchMarker(index, { name })"
+        @deleteMarker="deleteMarker"
+      />
+
       <!-- what the held flag should be: somewhere to come back to, or somewhere to jump from -->
       <div v-if="markerMenu" ref="markerMenuAnchor" class="marker-menu" :style="{ left: `${markerMenu.x}px` }">
         <input
@@ -699,7 +734,7 @@ defineExpose({ position: currentTime })
         >
           <i class="fas fa-plus" />
         </button>
-        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop || !canWrite" @click="deleteLoop">
+        <button class="tbtn" aria-label="Delete this loop" :disabled="!currentLoop || !canWrite" @click="deleteLoopAt(selectedLoop)">
           <i class="fas fa-trash" />
         </button>
       </div>

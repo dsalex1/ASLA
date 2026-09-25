@@ -3,6 +3,7 @@ import { formatDuration, getSongInformation } from '@/helpers'
 import { transposeChord } from '@/helpers/lyrics'
 import { PANE_VIEW_ICONS, PANE_VIEW_LABELS, PANE_VIEWS } from '@/helpers/paneViews'
 import { PaneView, Song, ViewMode } from '@/types'
+import { useTour } from '@/tour/useTour'
 import { computed } from 'vue'
 
 const props = defineProps<{
@@ -29,6 +30,10 @@ const capo = defineModel<number>('capo', { required: true })
 const view = defineModel<PaneView>('view', { required: true })
 const fontSize = defineModel<number>('fontSize', { required: true })
 const autoScroll = defineModel<boolean>('autoScroll', { required: true })
+
+// the guides live in this menu here rather than on the pane: a performance screen has no
+// room to spare for a help button
+const { startHere } = useTour()
 
 const showLyrics = computed(() => props.shown == 'lyrics' || props.shown == 'chords')
 
@@ -86,6 +91,8 @@ const playedKey = computed(() =>
           :title="PANE_VIEW_LABELS[v]"
           @click="view = v"
         />
+        <v-divider />
+        <v-list-item prepend-icon="fas fa-circle-question" title="Guide" @click="startHere" />
       </v-list>
     </v-menu>
     <v-btn

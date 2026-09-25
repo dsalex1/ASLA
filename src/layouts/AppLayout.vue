@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppUpdatePrompt from '@/components/AppUpdatePrompt.vue'
+import TourMenu from '@/tour/TourMenu.vue'
 import { HOME_ROUTE } from '@/router'
 import { useAccess } from '@/composables/useAccess'
 import { useAuth } from '@/stores/auth'
@@ -35,6 +36,7 @@ const version = `V${__APP_VERSION__}${__BETA_BUILD__ ? `-beta${__BETA_BUILD__}` 
         <v-btn v-if="xs" icon="fas fa-users" color="white" variant="text" density="comfortable" title="Users" />
         <v-btn v-else prepend-icon="fas fa-users" color="white" variant="text">users</v-btn>
       </RouterLink>
+      <TourMenu />
       <span class="me-2 text-truncate" style="min-width: 0">{{ auth.user?.email }}</span>
       <v-btn
         v-if="xs"

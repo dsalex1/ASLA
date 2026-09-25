@@ -3,7 +3,7 @@ import { autoNumbers } from '@/helpers/autoNumber'
 import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { Loop, Marker } from '@/types'
 import { useElementSize } from '@vueuse/core'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -589,7 +589,7 @@ type Drag =
   | { kind: 'marker'; index: number; fromX: number; armed: boolean; moved: boolean }
   | { kind: 'loop'; which: 'a' | 'b'; fromX: number; fromTime: number }
   | { kind: 'savedLoop'; index: number; which: 'a' | 'b'; fromX: number; fromTime: number; armed: boolean; moved: boolean }
-  | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
+  | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean; caught?: boolean }
 
 let drag: Drag | null = null
 let holdTimer: ReturnType<typeof setTimeout> | null = null
@@ -599,6 +599,56 @@ function cancelHold() {
 }
 const pointers = new Map<number, number>() // pointerId -> x
 let pinchStart: { distance: number; span: number } | null = null
+
+// --- inertia: a flicked wave keeps coasting under the playhead and slows to a stop ---
+/** how long the coast takes to lose most of its speed, in ms; about what a phone list does */
+const FLING_DECAY = 325
+/** below this, in px/ms, a release is a let-go rather than a flick, and a coast is over */
+const FLING_MIN = 0.05
+/** only the last stretch of a drag says how fast it was going when it was let go */
+const FLING_WINDOW = 100
+/** a drag that stopped this long before it was released was put down, not thrown */
+const FLING_STALE = 60
+
+let panTrail: { t: number; x: number }[] = []
+let fling: { velocity: number; last: number; frame: number } | null = null
+
+function stopFling() {
+  if (fling) cancelAnimationFrame(fling.frame)
+  fling = null
+}
+
+/** the speed the wave was moving at over the last few moves, px/ms, or 0 if it had stopped */
+function releaseVelocity() {
+  const now = performance.now()
+  const recent = panTrail.filter((p) => now - p.t <= FLING_WINDOW)
+  if (recent.length < 2 || now - recent[recent.length - 1].t > FLING_STALE) return 0
+  const first = recent[0]
+  const last = recent[recent.length - 1]
+  return last.t > first.t ? (last.x - first.x) / (last.t - first.t) : 0
+}
+
+function startFling(velocity: number) {
+  stopFling()
+  if (Math.abs(velocity) < FLING_MIN) return
+  const step = (time: number) => {
+    if (!fling) return
+    // a frame time that did not move on is still a frame; without one the coast never ends
+    const dt = time > fling.last ? Math.min(time - fling.last, 64) : 16
+    fling.last = time > fling.last ? time : fling.last + dt
+    fling.velocity *= Math.exp(-dt / FLING_DECAY)
+    // the position is read fresh every frame, so a coast while playing rides on top of it
+    const at = clampTime(props.position - fling.velocity * dt * secondsPerPixel.value)
+    emit('seek', at)
+    const hitEnd = at <= 0 || at >= props.duration
+    if (hitEnd || Math.abs(fling.velocity) < FLING_MIN) return void (fling = null)
+    fling.frame = requestAnimationFrame(step)
+  }
+  fling = { velocity, last: performance.now(), frame: 0 }
+  fling.frame = requestAnimationFrame(step)
+}
+
+onBeforeUnmount(stopFling)
 
 function localX(e: PointerEvent) {
   return e.clientX - (wrapper.value?.getBoundingClientRect().left ?? 0)
@@ -624,6 +674,8 @@ function hitTest(x: number, y: number): Drag {
 function applyDrag(x: number) {
   if (!drag) return
   if (drag.kind === 'pan') {
+    panTrail.push({ t: performance.now(), x })
+    if (panTrail.length > 20) panTrail.shift()
     const travelled = x - drag.fromX
     if (Math.abs(travelled) > TAP_SLOP) drag.moved = true
     if (drag.moved) emit('seek', clampTime(drag.fromPosition - travelled * secondsPerPixel.value))
@@ -669,6 +721,10 @@ function onPointerDown(e: PointerEvent) {
     /* ignore */
   }
   pointers.set(e.pointerId, e.clientX)
+  // a press on a coasting wave catches it, and only that: it is not a tap on the spot
+  const caught = !!fling
+  stopFling()
+  panTrail = []
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()]
     pinchStart = { distance: Math.abs(a - b), span: span.value }
@@ -679,6 +735,10 @@ function onPointerDown(e: PointerEvent) {
   }
   const rect = wrapper.value!.getBoundingClientRect()
   drag = hitTest(localX(e), e.clientY - rect.top)
+  if (drag.kind === 'pan') {
+    drag.caught = caught
+    panTrail.push({ t: performance.now(), x: localX(e) })
+  }
   if (drag.kind === 'savedLoop') emit('selectLoop', drag.index)
   if (drag.kind === 'marker' || drag.kind === 'savedLoop') {
     // holding a flag picks it up. Without the right to save where it lands it is never
@@ -706,7 +766,9 @@ function onPointerMove(e: PointerEvent) {
 
 function onPointerUp(e: PointerEvent) {
   // a press that never moved is a tap: jump to the spot it landed on
-  if (drag?.kind === 'pan' && !drag.moved) emit('seek', clampTime(timeOf(localX(e))))
+  if (drag?.kind === 'pan' && !drag.moved && !drag.caught) emit('seek', clampTime(timeOf(localX(e))))
+  // one that was let go while still moving throws the wave, which coasts on from there
+  if (drag?.kind === 'pan' && drag.moved && pointers.size === 1 && e.type === 'pointerup') startFling(releaseVelocity())
   if (drag?.kind === 'marker' && !drag.moved) {
     if (drag.armed) emit('markerMenu', drag.index, xOf(props.markers[drag.index].at))
     else emit('seek', clampTime(props.markers[drag.index].at))
@@ -720,6 +782,7 @@ function onPointerUp(e: PointerEvent) {
 function onWheel(e: WheelEvent) {
   if (props.overview) return
   e.preventDefault()
+  stopFling()
   emit('zoom', span.value * (e.deltaY > 0 ? 1.2 : 1 / 1.2))
 }
 </script>
