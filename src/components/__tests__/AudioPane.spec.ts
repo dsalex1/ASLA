@@ -861,6 +861,18 @@ describe('AudioPane loop and marker list', () => {
     expect(rows(wrapper)).toEqual(['Loop 1', 'Solo', 'Verse', 'Marker 1'])
   })
 
+  it('can list everything as one list in time order instead', async () => {
+    const wrapper = await mountPane([
+      track({ markers: [{ at: 5, name: 'Verse' }, { at: 30 }], loops: [{ a: 40, b: 50, name: 'Solo' }, { a: 10, b: 20 }] }),
+    ])
+    await button(wrapper, 'Show loops and markers').trigger('click')
+    await button(wrapper, 'List layout').trigger('click')
+    await wrapper.find('input[value="chronological"]').setValue()
+    expect(rows(wrapper)).toEqual(['Verse', 'Loop 1', 'Marker 1', 'Solo'])
+    expect(wrapper.findAll('.lm-section')).toHaveLength(0)
+    expect(localStorage.getItem('audio.listLayout')).toBe('chronological')
+  })
+
   it('puts the A-B on a loop picked from it, and the playhead at its start', async () => {
     const wrapper = await mountPane([track({ loops: [{ a: 40, b: 50 }] })])
     await button(wrapper, 'Show loops and markers').trigger('click')

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { autoNumbers } from '@/helpers/autoNumber'
 import { Loop, Marker } from '@/types'
+import { onClickOutside, useLocalStorage } from '@vueuse/core'
 import { computed, nextTick, ref } from 'vue'
 
 /**
@@ -41,6 +42,27 @@ const loopRows = computed(() =>
 const markerRows = computed(() =>
   props.markers.map((marker, index) => ({ marker, index, label: marker.name || `Marker ${markerNumbers.value[index] ?? ''}` }))
 )
+
+/** grouped: loops, then markers. In time order: one list, as they come in the song. */
+const layout = useLocalStorage<'grouped' | 'chronological'>('audio.listLayout', 'grouped')
+const settingsOpen = ref(false)
+const settingsAnchor = ref<HTMLElement | null>(null)
+onClickOutside(settingsAnchor, () => (settingsOpen.value = false))
+
+type Row =
+  | { kind: 'loop'; index: number; at: number; label: string; loop: Loop }
+  | { kind: 'marker'; index: number; at: number; label: string; marker: Marker }
+
+const sections = computed((): { title: string; empty: string; rows: Row[] }[] => {
+  const loopItems: Row[] = loopRows.value.map((r) => ({ kind: 'loop', at: r.loop.a, ...r }))
+  const markerItems: Row[] = markerRows.value.map((r) => ({ kind: 'marker', at: r.marker.at, ...r }))
+  if (layout.value === 'chronological')
+    return [{ title: '', empty: 'No loops or markers yet', rows: [...loopItems, ...markerItems].sort((a, b) => a.at - b.at) }]
+  return [
+    { title: 'Loops', empty: 'None saved yet: set A and B, then +', rows: loopItems },
+    { title: 'Markers', empty: 'No markers yet', rows: markerItems },
+  ]
+})
 
 /** the marker the playhead is at or has most recently passed */
 const currentMarker = computed(() => {
@@ -94,80 +116,95 @@ const isEditing = (kind: 'loop' | 'marker', index: number) => editing.value?.kin
 
     <div v-else class="lm-panel">
       <div class="lm-head">
-        <span>Loops &amp; markers</span>
+        <span style="flex: 1">Loops &amp; markers</span>
+        <div ref="settingsAnchor" class="lm-settings-anchor">
+          <button
+            class="lm-icon"
+            :class="{ 'lm-icon--on': settingsOpen }"
+            aria-label="List layout"
+            title="How the list is laid out"
+            @click="settingsOpen = !settingsOpen"
+          >
+            <i class="fas fa-gear" />
+          </button>
+          <div v-if="settingsOpen" class="lm-settings">
+            <div class="lm-settings-title">Show</div>
+            <label class="lm-option">
+              <input v-model="layout" type="radio" value="grouped" />
+              <span>Loops, then markers</span>
+            </label>
+            <label class="lm-option">
+              <input v-model="layout" type="radio" value="chronological" />
+              <span>One list, in time order</span>
+            </label>
+          </div>
+        </div>
         <button class="lm-icon" aria-label="Hide loops and markers" @click="open = false">
           <i class="fas fa-chevron-left" />
         </button>
       </div>
 
       <div class="lm-scroll">
-        <div class="lm-section">Loops</div>
-        <div v-if="!loopRows.length" class="lm-empty">None saved yet: set A and B, then +</div>
-        <div
-          v-for="row in loopRows"
-          :key="`l${row.index}`"
-          class="lm-row"
-          :class="{ 'lm-row--on': row.index === selectedLoop }"
-        >
-          <i class="fas fa-repeat lm-kind lm-kind--loop" />
-          <input
-            v-if="isEditing('loop', row.index)"
-            ref="field"
-            v-model="draft"
-            class="lm-field"
-            :placeholder="`Loop ${loopNumbers[row.index] ?? ''}`"
-            aria-label="Loop name"
-            @keydown.enter="commitRename"
-            @keydown.esc="editing = null"
-            @blur="commitRename"
-          />
-          <button v-else class="lm-pick" @click="emit('selectLoop', row.index)">
-            <span class="lm-label">{{ row.label }}</span>
-            <span class="lm-time">{{ time(row.loop.a) }}–{{ time(row.loop.b) }}</span>
-          </button>
-          <template v-if="editable && !isEditing('loop', row.index)">
-            <button class="lm-icon" aria-label="Rename loop" @click="startRename('loop', row.index, row.loop.name)">
-              <i class="fas fa-pen" />
+        <template v-for="section in sections" :key="section.title">
+          <div v-if="section.title" class="lm-section">{{ section.title }}</div>
+          <div v-if="!section.rows.length" class="lm-empty">{{ section.empty }}</div>
+          <div
+            v-for="row in section.rows"
+            :key="`${row.kind}${row.index}`"
+            class="lm-row"
+            :class="{
+              'lm-row--on': row.kind === 'loop' ? row.index === selectedLoop : row.index === currentMarker,
+            }"
+          >
+            <i
+              class="fas lm-kind"
+              :class="
+                row.kind === 'loop'
+                  ? 'fa-repeat lm-kind--loop'
+                  : row.marker.skip
+                    ? 'fa-forward-step lm-kind--skip'
+                    : 'fa-flag lm-kind--marker'
+              "
+            />
+            <input
+              v-if="isEditing(row.kind, row.index)"
+              ref="field"
+              v-model="draft"
+              class="lm-field"
+              :placeholder="row.kind === 'loop' ? `Loop ${loopNumbers[row.index] ?? ''}` : `Marker ${markerNumbers[row.index] ?? ''}`"
+              :aria-label="row.kind === 'loop' ? 'Loop name' : 'Marker name'"
+              @keydown.enter="commitRename"
+              @keydown.esc="editing = null"
+              @blur="commitRename"
+            />
+            <button
+              v-else
+              class="lm-pick"
+              @click="row.kind === 'loop' ? emit('selectLoop', row.index) : emit('seek', row.marker.at)"
+            >
+              <span class="lm-label">{{ row.label }}</span>
+              <span class="lm-time">
+                {{ row.kind === 'loop' ? `${time(row.loop.a)}–${time(row.loop.b)}` : time(row.marker.at) }}
+              </span>
             </button>
-            <button class="lm-icon lm-icon--danger" aria-label="Delete loop" @click="emit('deleteLoop', row.index)">
-              <i class="fas fa-trash" />
-            </button>
-          </template>
-        </div>
-
-        <div class="lm-section">Markers</div>
-        <div v-if="!markerRows.length" class="lm-empty">No markers yet</div>
-        <div
-          v-for="row in markerRows"
-          :key="`m${row.index}`"
-          class="lm-row"
-          :class="{ 'lm-row--on': row.index === currentMarker }"
-        >
-          <i class="fas lm-kind" :class="row.marker.skip ? 'fa-forward-step lm-kind--skip' : 'fa-flag lm-kind--marker'" />
-          <input
-            v-if="isEditing('marker', row.index)"
-            ref="field"
-            v-model="draft"
-            class="lm-field"
-            :placeholder="`Marker ${markerNumbers[row.index] ?? ''}`"
-            aria-label="Marker name"
-            @keydown.enter="commitRename"
-            @keydown.esc="editing = null"
-            @blur="commitRename"
-          />
-          <button v-else class="lm-pick" @click="emit('seek', row.marker.at)">
-            <span class="lm-label">{{ row.label }}</span>
-            <span class="lm-time">{{ time(row.marker.at) }}</span>
-          </button>
-          <template v-if="editable && !isEditing('marker', row.index)">
-            <button class="lm-icon" aria-label="Rename marker" @click="startRename('marker', row.index, row.marker.name)">
-              <i class="fas fa-pen" />
-            </button>
-            <button class="lm-icon lm-icon--danger" aria-label="Delete marker" @click="emit('deleteMarker', row.index)">
-              <i class="fas fa-trash" />
-            </button>
-          </template>
-        </div>
+            <template v-if="editable && !isEditing(row.kind, row.index)">
+              <button
+                class="lm-icon"
+                :aria-label="row.kind === 'loop' ? 'Rename loop' : 'Rename marker'"
+                @click="startRename(row.kind, row.index, row.kind === 'loop' ? row.loop.name : row.marker.name)"
+              >
+                <i class="fas fa-pen" />
+              </button>
+              <button
+                class="lm-icon lm-icon--danger"
+                :aria-label="row.kind === 'loop' ? 'Delete loop' : 'Delete marker'"
+                @click="row.kind === 'loop' ? emit('deleteLoop', row.index) : emit('deleteMarker', row.index)"
+              >
+                <i class="fas fa-trash" />
+              </button>
+            </template>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -324,6 +361,44 @@ const isEditing = (kind: 'loop' | 'marker', index: number) => editing.value?.kin
 .lm-icon:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #ddd;
+}
+.lm-icon--on {
+  color: #f59e0b;
+}
+.lm-settings-anchor {
+  position: relative;
+}
+.lm-settings {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  width: 200px;
+  padding: 8px 10px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #141414;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 60%);
+  font-weight: 400;
+}
+.lm-settings-title {
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #777;
+}
+.lm-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: #e8e8e8;
+  cursor: pointer;
+}
+.lm-option input {
+  accent-color: #f59e0b;
 }
 .lm-icon--danger:hover {
   color: #ef4444;

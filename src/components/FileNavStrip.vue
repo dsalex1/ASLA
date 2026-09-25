@@ -19,7 +19,7 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="d-flex ms-4" style="overflow-x: scroll; flex: 1">
+  <div class="d-flex ms-4 file-nav-strip" style="overflow-x: scroll; flex: 1">
     <v-btn
       ref="navButtons"
       variant="plain"

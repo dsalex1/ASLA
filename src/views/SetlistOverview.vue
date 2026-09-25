@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Backbutton from '@/components/Backbutton.vue'
 import OfflineToggle from '@/components/OfflineToggle.vue'
+import { useAccess } from '@/composables/useAccess'
 import SongListItem from '@/components/SongListItem.vue'
 import { isSongCached, useOfflinePins } from '@/composables/useOfflinePins'
 import { getSongInformation } from '@/helpers'
@@ -24,6 +25,11 @@ const songs = computed(() =>
     .map((entry) => (typeof entry === 'string' ? songsCollection.value.find((s) => s.id == entry)! : entry))
     .filter((f) => f)
 )
+
+const { isAdmin } = useAccess()
+
+// only once it has loaded: until then it is not empty, it is unknown
+const empty = computed(() => !!setlistData.data.value && !setlistData.data.value.songs?.length)
 
 const { isPinned } = useOfflinePins()
 
@@ -99,19 +105,31 @@ function print() {
 
 <template>
   <AppLayout>
-    <h2 class="d-flex">
+    <h2 class="d-flex flex-wrap align-center ga-2">
       <div>
         <Backbutton :to="HOME_ROUTE" />
       </div>
-      <div style="flex: 1">
+      <div style="flex: 1; min-width: 0">
         {{ setlistData?.name }}
       </div>
-      <div class="d-flex align-center ga-2">
-        <OfflineToggle :setlist-id="setlistId" :songs="songs" labelled />
-        <v-btn color="primary" @click="print" class="ms-2">Print</v-btn>
+      <div class="d-flex align-center flex-wrap justify-end ga-2">
+        <OfflineToggle v-if="!empty" :setlist-id="setlistId" :songs="songs" labelled />
+        <v-btn v-if="!empty" color="primary" prepend-icon="fas fa-print" @click="print">Print</v-btn>
+        <v-btn v-if="isAdmin" :to="`/setlist/${setlistId}/edit`" color="primary" variant="tonal" prepend-icon="fas fa-edit">
+          Edit
+        </v-btn>
       </div>
     </h2>
-    <div class="w-100 d-flex justify-center">
+    <div v-if="empty" class="empty-setlist">
+      <v-icon icon="fas fa-music" size="48" class="mb-4" />
+      <div class="text-h6 mb-1">No songs yet</div>
+      <template v-if="isAdmin">
+        <div class="text-body-2 mb-4">Edit the setlist to add songs to it.</div>
+        <v-btn :to="`/setlist/${setlistId}/edit`" color="primary" prepend-icon="fas fa-plus">Add songs</v-btn>
+      </template>
+      <div v-else class="text-body-2">An admin has not added any songs to this setlist yet.</div>
+    </div>
+    <div v-else class="w-100 d-flex justify-center">
       <v-list density="compact">
         <template v-for="(song, index) in songs">
           <SongListItem :index="index + 1" :song="song" :offline="availability[index]" />
@@ -122,6 +140,15 @@ function print() {
 </template>
 
 <style scoped lang="scss">
+.empty-setlist {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 64px auto;
+  max-width: 360px;
+  text-align: center;
+  color: rgba(0, 0, 0, 0.6);
+}
 .disable-active-underlay {
   .v-list-item {
     --v-activated-opacity: 0;

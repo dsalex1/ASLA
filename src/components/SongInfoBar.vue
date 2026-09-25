@@ -62,7 +62,7 @@ const playedKey = computed(() =>
 </script>
 
 <template>
-  <div class="w-100 text-center">
+  <div class="w-100 text-center song-info-bar">
     <span v-html="getSongInformation(song, false)" />
     <span v-if="song.duration">
       <template v-if="getSongInformation(song, false)">-</template>

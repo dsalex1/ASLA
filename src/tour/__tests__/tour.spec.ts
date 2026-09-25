@@ -1,5 +1,5 @@
 import TourGuide from '@/tour/TourGuide.vue'
-import { AUDIO_TOUR, APP_TOUR } from '@/tour/tours'
+import { AUDIO_TOUR, APP_TOUR, SHEETS_TOUR, TOURS } from '@/tour/tours'
 import { stepsFor, useTour } from '@/tour/useTour'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -138,6 +138,43 @@ describe('TourGuide', () => {
     await settle()
     expect(push).toHaveBeenCalledWith('/setlist')
     expect(cardTitle()).toBe('Welcome')
+  })
+
+  it('starts the sheet guide over a song that is not in the player', async () => {
+    route.path = '/setlist/abc'
+    page('<div class="song-info-bar"></div>')
+    mount(TourGuide, { attachTo: document.body })
+    await settle()
+    expect(tour.active.value?.id).toBe(SHEETS_TOUR.id)
+  })
+
+  it('passes over a step that could not set its screen up, and tidies up at the end', async () => {
+    const end = vi.fn()
+    const guide = {
+      id: 'test',
+      title: 'Test',
+      trigger: '#never',
+      end,
+      steps: [
+        { title: 'One', body: [] },
+        { title: 'Two', body: [], before: () => false },
+        { title: 'Three', body: [] },
+      ],
+    }
+    TOURS.push(guide)
+    try {
+      mount(TourGuide, { attachTo: document.body })
+      tour.start('test')
+      await settle()
+      press('Next')
+      await settle()
+      expect(cardTitle()).toBe('Three')
+      press('Done')
+      await settle()
+      expect(end).toHaveBeenCalledOnce()
+    } finally {
+      TOURS.splice(TOURS.indexOf(guide), 1)
+    }
   })
 
   it('closes on Escape', async () => {

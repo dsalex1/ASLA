@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { AUDIO_TOUR, APP_TOUR } from './tours'
+import { APP_TOUR, AUDIO_TOUR, SHEETS_TOUR, Tour, triggerOf } from './tours'
 import { useTour } from './useTour'
 
-/** the ? in the top bar: where either guide can be had again */
+/** the ? in the top bar: where every guide can be had again */
 const tour = useTour()
-const notice = ref(false)
+const notice = ref('')
 
-/** the player's guide needs the player: off it, it waits for the next song opened in audio */
-function audioGuide() {
-  if (document.querySelector(AUDIO_TOUR.trigger)) return tour.start(AUDIO_TOUR.id)
-  tour.startNextTime(AUDIO_TOUR.id)
-  notice.value = true
+/** the player's and the sheets' guides need their screen: off it, they wait for it to open */
+function screenGuide(guide: Tour, where: string) {
+  if (triggerOf(guide)) return tour.start(guide.id)
+  tour.startNextTime(guide.id)
+  notice.value = `The guide will start when you next open a setlist in ${where}.`
 }
 </script>
 
@@ -22,10 +22,11 @@ function audioGuide() {
     </template>
     <v-list density="compact">
       <v-list-item prepend-icon="fas fa-compass" :title="APP_TOUR.title" @click="tour.start(APP_TOUR.id)" />
-      <v-list-item prepend-icon="fas fa-headphones" :title="AUDIO_TOUR.title" @click="audioGuide" />
+      <v-list-item prepend-icon="fas fa-file-lines" :title="SHEETS_TOUR.title" @click="screenGuide(SHEETS_TOUR, 'Lyrics, Chords or Drums')" />
+      <v-list-item prepend-icon="fas fa-headphones" :title="AUDIO_TOUR.title" @click="screenGuide(AUDIO_TOUR, 'Audio mode')" />
     </v-list>
   </v-menu>
-  <v-snackbar v-model="notice" :timeout="5000">
-    The audio guide will start when you next open a song in Audio mode.
+  <v-snackbar :model-value="!!notice" :timeout="5000" @update:model-value="(open) => open || (notice = '')">
+    {{ notice }}
   </v-snackbar>
 </template>

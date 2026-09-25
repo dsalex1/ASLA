@@ -1,7 +1,7 @@
 import { useAccess } from '@/composables/useAccess'
 import { useLocalStorage } from '@vueuse/core'
 import { computed, ref } from 'vue'
-import { Tour, TourStep, TOURS } from './tours'
+import { Tour, TourStep, TOURS, triggerOf } from './tours'
 
 /**
  * Which guide is on screen and how far through it is. Module state, so the toolbar's help
@@ -34,9 +34,10 @@ function start(id: string) {
   index.value = 0
 }
 
-/** whichever guide belongs to what is on screen: the player's over the player, else the app's */
+/** whichever guide belongs to what is on screen: the player's over the player, the sheet
+ * views' over a song, else the app's */
 function startHere() {
-  const here = TOURS.find((t) => t.contextual && document.querySelector(t.trigger))
+  const here = TOURS.find((t) => t.contextual && triggerOf(t))
   start(here?.id ?? 'app')
 }
 
@@ -48,6 +49,7 @@ function startNextTime(id: string) {
 /** done or skipped alike: either way it is not sprung on anyone again */
 function finish() {
   if (active.value) seen.value = { ...seen.value, [seenKey(active.value.id)]: true }
+  active.value?.end?.()
   active.value = null
   index.value = 0
 }

@@ -3,7 +3,7 @@ import { useAccess } from '@/composables/useAccess'
 import { useElementSize, useEventListener, useWindowSize } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { TourStep, TOURS } from './tours'
+import { TourStep, TOURS, triggerOf } from './tours'
 import { useTour } from './useTour'
 
 /**
@@ -22,6 +22,7 @@ const PAD = 6 // room around the spotlit element
 const GAP = 12 // between the spotlight and the card
 const CARD_WIDTH = 340
 const FIND_TIMEOUT = 2500 // ms to wait for a step's target after changing page
+const BEFORE_SETTLE = 600 // ms for a new page to render before a step presses anything on it
 
 const target = ref<Element | null>(null)
 const rect = ref<DOMRect | null>(null)
@@ -61,6 +62,14 @@ async function show(at: number, direction: 1 | -1 = 1) {
     const s = steps.value[i]
     const moving = !!s.route && route.path !== s.route
     if (moving) await router.push(s.route!)
+    if (s.before) {
+      // what it presses has to be on the new page before it can be pressed
+      if (moving) await new Promise((done) => setTimeout(done, BEFORE_SETTLE))
+      if ((await s.before()) === false) {
+        if (run !== showing || !active.value) return
+        continue
+      }
+    }
     const el = await findTarget(s, moving ? FIND_TIMEOUT : 0)
     if (run !== showing || !active.value) return
     if (s.target && !el && s.optional) continue
@@ -137,7 +146,7 @@ function autoStart() {
     (t) =>
       (queued ? t.id === queued : !tour.hasSeen(t.id)) &&
       (!t.triggerRoute || route.path === t.triggerRoute) &&
-      visible(document.querySelector(t.trigger))
+      visible(triggerOf(t))
   )
   if (due) tour.start(due.id)
 }
