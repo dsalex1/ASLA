@@ -24,28 +24,30 @@ const CARD_WIDTH = 340
 const FIND_TIMEOUT = 2500 // ms to wait for a step's target after changing page
 const BEFORE_SETTLE = 600 // ms for a new page to render before a step presses anything on it
 
-const target = ref<Element | null>(null)
-const rect = ref<DOMRect | null>(null)
+const target = ref<Element[]>([])
+const rect = ref<{ left: number; top: number; width: number; height: number } | null>(null)
 /** set while a step is still being looked for, so the old spotlight does not linger */
 const finding = ref(false)
 
-const resolve = (s: TourStep) => (typeof s.target === 'function' ? s.target() : s.target ? document.querySelector(s.target) : null) ?? null
-
-const visible = (el: Element | null) => {
+const visible = (el: Element | null | undefined) => {
   if (!el) return false
   const r = el.getBoundingClientRect()
   return r.width > 0 || r.height > 0
 }
 
+/** the step's elements that are on screen, as a list whether it names one or several */
+const resolve = (s: TourStep) =>
+  [typeof s.target === 'function' ? s.target() : s.target ? document.querySelector(s.target) : null].flat().filter(visible) as Element[]
+
 /** wait for the element to turn up: after a change of page, that page may still be loading */
-function findTarget(s: TourStep, patience: number): Promise<Element | null> {
-  if (!s.target) return Promise.resolve(null)
+function findTarget(s: TourStep, patience: number): Promise<Element[]> {
+  if (!s.target) return Promise.resolve([])
   return new Promise((done) => {
     const began = Date.now()
     const look = () => {
-      const el = resolve(s)
-      if (visible(el)) return done(el)
-      if (Date.now() - began >= patience) return done(null)
+      const els = resolve(s)
+      if (els.length) return done(els)
+      if (Date.now() - began >= patience) return done([])
       setTimeout(look, 100)
     }
     look()
@@ -70,12 +72,12 @@ async function show(at: number, direction: 1 | -1 = 1) {
         continue
       }
     }
-    const el = await findTarget(s, moving ? FIND_TIMEOUT : 0)
+    const els = await findTarget(s, moving ? FIND_TIMEOUT : 0)
     if (run !== showing || !active.value) return
-    if (s.target && !el && s.optional) continue
+    if (s.target && !els.length && s.optional) continue
     index.value = i
-    target.value = el
-    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    target.value = els
+    els[0]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
     measure()
     finding.value = false
     return
@@ -92,7 +94,11 @@ const isLast = computed(() => !steps.value.slice(index.value + 1).length)
 // the spotlight follows its element while it moves: a page scrolling, a panel opening
 let frame = 0
 function measure() {
-  rect.value = target.value?.isConnected ? target.value.getBoundingClientRect() : null
+  const rs = target.value.filter((el) => el.isConnected).map((el) => el.getBoundingClientRect())
+  if (!rs.length) return void (rect.value = null)
+  const left = Math.min(...rs.map((r) => r.left))
+  const top = Math.min(...rs.map((r) => r.top))
+  rect.value = { left, top, width: Math.max(...rs.map((r) => r.right)) - left, height: Math.max(...rs.map((r) => r.bottom)) - top }
 }
 function follow() {
   measure()
@@ -102,7 +108,7 @@ watch(
   active,
   (tourOn) => {
     cancelAnimationFrame(frame)
-    target.value = null
+    target.value = []
     rect.value = null
     if (!tourOn) return
     follow()

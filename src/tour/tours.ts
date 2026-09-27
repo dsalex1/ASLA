@@ -10,8 +10,9 @@ export type TourStep = {
   title: string
   /** one paragraph per entry */
   body: string[]
-  /** what to point at; without one the card sits in the middle of the screen */
-  target?: string | (() => Element | null | undefined)
+  /** what to point at; without one the card sits in the middle of the screen. Several
+   * elements are lit as the one box around them all. */
+  target?: string | (() => Element | (Element | null | undefined)[] | null | undefined)
   /** the page this step is on; the guide goes there first */
   route?: string
   /** a step about something only one kind of account can do */
@@ -189,7 +190,8 @@ export const APP_TOUR: Tour = {
       for: 'admin',
       route: '/song',
       before: openCreateDialog,
-      target: () => fieldLabeled('Key Signature')()?.closest('.v-row'),
+      // just these fields: their row holds the whole form, and lighting that put the card on top of them
+      target: () => ['Key Signature', 'BPM', 'Ibi Instrument', 'Folder', 'Minutes', 'Seconds'].map((l) => fieldLabeled(l)()),
       optional: true,
       body: [
         'Key and BPM show above the sheet; the BPM also drives the click and the count-in.',
