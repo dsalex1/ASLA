@@ -303,6 +303,16 @@ describe('FileViewer view switching', () => {
     expect(w.findAll('.page-half')).toHaveLength(0) // the words are scrolled by hand instead
   })
 
+  it('switching onto the sheet from the audio pane starts it on its first page', async () => {
+    const twoPages = { ...everything, pdfImageStorageRefs: ['i/a1.webp', 'i/a2.webp'] }
+    const w = await mountViewer({ songs: [twoPages], mode: 'audio' })
+    await pick(w, 'sheet')
+    await nextArea(w).trigger('click')
+    await pick(w, 'waveform')
+    await pick(w, 'sheet')
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+  })
+
   it('keeps the sheet loaded while the words are on screen', async () => {
     const w = await mountViewer({ songs: [everything], mode: 'chords' })
     await pick(w, 'lyrics')
@@ -310,5 +320,128 @@ describe('FileViewer view switching', () => {
     expect(visibleImgs(w)).toEqual([])
     await pick(w, 'sheet')
     expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+  })
+})
+
+describe('FileViewer pages per view', () => {
+  const infoBar = (w: ReturnType<typeof mount>) => w.findComponent(SongInfoBar)
+  const pick = async (w: ReturnType<typeof mount>, view: PaneView) => {
+    infoBar(w).vm.$emit('update:view', view)
+    await flushPromises()
+  }
+  type Nav = { currentFileIndex: number; currentFilePage: number }
+  const at = (w: ReturnType<typeof mount>) => {
+    const { currentFileIndex, currentFilePage } = w.vm as unknown as Nav
+    return [currentFileIndex, currentFilePage]
+  }
+  // the page segments drawn under each song's name in the top bar
+  const strip = (w: ReturnType<typeof mount>) =>
+    w.findAll('.file-nav-strip .v-btn').map((b) => b.findAll('.nav-page').length)
+
+  const pages = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}.webp`)
+  const threePageSheet = song({
+    name: 'A',
+    pdfStorageRef: 'a.pdf',
+    pdfImageStorageRefs: pages('i/a', 3),
+    drumsPdfImageStorageRefs: pages('d/a', 2),
+    lyrics: 'C\nwords of A',
+  })
+  const songB = song({ name: 'B', pdfStorageRef: 'b.pdf', pdfImageStorageRefs: pages('i/b', 2), lyrics: 'G\nB' })
+
+  it('counts a song as one page while its words are shown, so one swipe reaches the next song', async () => {
+    const w = await mountViewer({ songs: [threePageSheet, songB], mode: 'chords' })
+    expect(strip(w)).toEqual([3, 2])
+
+    for (const view of ['lyrics', 'chords'] as const) {
+      await pick(w, view)
+      expect(strip(w)).toEqual([1, 1])
+      await nextArea(w).trigger('click')
+      expect(at(w)).toEqual([1, 1])
+      await prevArea(w).trigger('click')
+      expect(at(w)).toEqual([0, 1]) // back onto the words, not a page of the hidden sheet
+    }
+  })
+
+  it('opens a setlist in lyrics mode without the sheet pages in the top bar', async () => {
+    const w = await mountViewer({ songs: [threePageSheet, songB], mode: 'lyrics' })
+    expect(strip(w)).toEqual([1, 1])
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([1, 1])
+  })
+
+  it('switching from page 3 of the sheet to the words leaves the words on their only page', async () => {
+    const w = await mountViewer({ songs: [threePageSheet, songB], mode: 'chords' })
+    await nextArea(w).trigger('click')
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([0, 3])
+
+    await pick(w, 'lyrics')
+    expect(at(w)).toEqual([0, 1])
+    expect(strip(w)).toEqual([1, 1])
+    expect(w.text()).toContain('words of A')
+    expect(visibleImgs(w)).toEqual([])
+  })
+
+  it('switching from the words to the sheet starts it on its first page', async () => {
+    const w = await mountViewer({ songs: [threePageSheet, songB], mode: 'lyrics' })
+    await pick(w, 'sheet')
+    expect(at(w)).toEqual([0, 1])
+    expect(strip(w)).toEqual([3, 2])
+    expect(visibleImgs(w)).toEqual(['https://files.test/i/a1.webp'])
+  })
+
+  it('counts the pages of the drum sheet, not those of the chord sheet', async () => {
+    const w = await mountViewer({ songs: [threePageSheet, songB], mode: 'chords' })
+    await nextArea(w).trigger('click')
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([0, 3])
+
+    await pick(w, 'drums')
+    expect(at(w)).toEqual([0, 1])
+    expect(visibleImgs(w)).toEqual(['https://files.test/d/a1.webp'])
+    // B has no drum sheet, so it is shown with its chord sheet and counts those pages
+    expect(strip(w)).toEqual([2, 2])
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([0, 2])
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([1, 1])
+    await prevArea(w).trigger('click')
+    expect(at(w)).toEqual([0, 2]) // the last page of the drum sheet, not page 3
+
+    await pick(w, 'sheet')
+    expect(at(w)).toEqual([0, 1])
+    expect(strip(w)).toEqual([3, 2])
+  })
+
+  it('counts the pages of a song that falls back to its sheet in lyrics mode', async () => {
+    const noWords = song({ name: 'C', pdfStorageRef: 'c.pdf', pdfImageStorageRefs: pages('i/c', 2) })
+    const w = await mountViewer({ songs: [threePageSheet, noWords, songB], mode: 'lyrics' })
+    expect(strip(w)).toEqual([1, 2, 1])
+
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([1, 1])
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([1, 2])
+    await nextArea(w).trigger('click')
+    expect(at(w)).toEqual([2, 1])
+    await prevArea(w).trigger('click')
+    expect(at(w)).toEqual([1, 2]) // stepping back onto it lands on its last page
+  })
+
+  it('does not carry the page count of a chord sheet pdf over to the drum sheet pdf', async () => {
+    const pdfs = song({ name: 'A', pdfStorageRef: 'a.pdf', drumsPdfStorageRef: 'd.pdf' })
+    const w = await mountViewer({ songs: [pdfs], mode: 'chords' })
+    // a pdf only tells its page count once the renderer has loaded it
+    const rendered = async (numPages: number) => {
+      w.findComponent({ name: 'VuePdfEmbed' }).vm.$emit('loaded', { numPages })
+      await flushPromises()
+    }
+    await rendered(3)
+    expect(strip(w)).toEqual([3])
+
+    await pick(w, 'drums')
+    expect(strip(w)).toEqual([1])
+    await rendered(2)
+    expect(strip(w)).toEqual([2])
   })
 })

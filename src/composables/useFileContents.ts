@@ -10,7 +10,12 @@ export type FileContent = {
   dataUrl: string
   name: string
   pageCount?: number
+  /** which pdf this was resolved from, when it was resolved for one */
+  sheet?: SheetKind
 }
+
+/** the two pdfs a song can have: its chord sheet and its drum sheet */
+export type SheetKind = 'chords' | 'drums'
 
 /** Offline copies resolve to object URLs, which stay alive until they are released. */
 function revoke(contents: FileContent[]) {
@@ -77,6 +82,7 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
     [songs, sheetMode],
     async () => {
       const showsSheets = sheetMode.value != 'lyrics' && sheetMode.value != 'audio'
+      const sheet = sheetMode.value == 'chords' || sheetMode.value == 'drums' ? sheetMode.value : undefined
       const stale = fileContents.value
       fileContents.value = await Promise.all(
         songs.value.map(async (song) => {
@@ -91,7 +97,9 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
             isPdf: !urls.length,
             // page images say how many there are outright; a pdf only gives its count up
             // once the renderer has loaded it, so that answer is carried over a re-resolve
-            pageCount: urls.length || previous?.pageCount || 1,
+            // of the same pdf, but not onto the other one: a drum sheet has its own pages
+            pageCount: urls.length || (previous?.sheet == sheet && previous?.pageCount) || 1,
+            sheet,
           }
         })
       )
@@ -103,5 +111,19 @@ export function useFileContents(songs: Ref<(Song | CustomSetlistEntry)[]>, sheet
 
   onScopeDispose(() => revoke(fileContents.value))
 
-  return { fileContents, sheetSources }
+  /**
+   * How many pages a song's chord or drum sheet has, whichever of the two is resolved at
+   * the moment: page images say so from the song alone, a pdf only once it is the one
+   * resolved and the renderer has loaded it.
+   */
+  function sheetPageCount(index: number, kind: SheetKind) {
+    const song = songs.value[index]
+    if (!song || 'title' in song) return 1
+    const images = kind == 'drums' ? song.drumsPdfImageStorageRefs : song.pdfImageStorageRefs
+    if (images?.length) return images.length
+    const file = fileContents.value[index]
+    return (file?.sheet == kind && file.pageCount) || 1
+  }
+
+  return { fileContents, sheetSources, sheetPageCount }
 }

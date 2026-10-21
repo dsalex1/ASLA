@@ -5,6 +5,8 @@ import { VBtn } from 'vuetify/components'
 
 const props = defineProps<{
   files: FileContent[]
+  /** the pages each file turns through in the view it is shown in, which is not always its sheet's */
+  pageCounts: number[]
   fileIndex: number
   page: number
   lockedTo?: number | null // while annotating, only this file stays selectable
@@ -33,13 +35,14 @@ watchEffect(() => {
     >
       {{ file.name.length > 15 ? file.name.slice(0, 15) + '...' : file.name }}
       <div
-        v-for="j in file.pageCount || 1"
+        v-for="j in pageCounts[i] || 1"
         :key="j"
+        class="nav-page"
         style="position: absolute; bottom: 0; top: 0; height: 100%"
         :style="{
-          width: `${100 / (file.pageCount || 1)}%`,
-          left: `${(j - 1) * (100 / (file.pageCount || 1))}%`,
-          borderRight: j == file.pageCount ? '1px solid black' : '1px dotted grey',
+          width: `${100 / (pageCounts[i] || 1)}%`,
+          left: `${(j - 1) * (100 / (pageCounts[i] || 1))}%`,
+          borderRight: j == (pageCounts[i] || 1) ? '1px solid black' : '1px dotted grey',
           backgroundColor: i == fileIndex && j === page ? 'rgba(var(--v-theme-primary), 0.2)' : 'transparent',
         }"
       ></div>

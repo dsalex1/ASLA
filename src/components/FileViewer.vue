@@ -49,15 +49,21 @@ const view = ref<PaneView>(viewOfMode(props.mode))
 // does not fetch a pdf until one is actually asked for.
 const sheetMode = ref<ViewMode>('lyrics')
 
-const { fileContents, sheetSources } = useFileContents(toRef(props, 'songs'), sheetMode)
+const { fileContents, sheetSources, sheetPageCount } = useFileContents(toRef(props, 'songs'), sheetMode)
 
-const available = computed<Record<PaneView, boolean>>(() => ({
-  waveform: !!song.value?.audioTracks?.length,
-  sheet: !!sheetSources.value[currentFileIndex.value]?.sheet,
-  drums: !!sheetSources.value[currentFileIndex.value]?.drums,
-  lyrics: !!song.value?.lyrics,
-  chords: !!song.value?.lyrics,
-}))
+/** which views the song at this place in the list has anything for */
+function availableAt(index: number): Record<PaneView, boolean> {
+  const entry = props.songs[index]
+  const at = entry && 'name' in entry ? entry : undefined
+  return {
+    waveform: !!at?.audioTracks?.length,
+    sheet: !!sheetSources.value[index]?.sheet,
+    drums: !!sheetSources.value[index]?.drums,
+    lyrics: !!at?.lyrics,
+    chords: !!at?.lyrics,
+  }
+}
+const available = computed(() => availableAt(currentFileIndex.value))
 
 const shown = computed(() => shownView(view.value, available.value))
 const showsSheet = computed(() => shown.value == 'sheet' || shown.value == 'drums')
@@ -75,6 +81,25 @@ watch(
   { immediate: true }
 )
 
+// The pages each song turns through: those of the sheet it is shown with, and only the
+// one for its words, its waveform or a title card, so a swipe there goes straight on to
+// the next song. Every song counts in the view it falls back to, not in the current one's.
+const pageCounts = computed(() =>
+  fileContents.value.map((_, i) => {
+    const can = availableAt(i)
+    const v = shownView(view.value, can)
+    if (!can[v] || (v != 'sheet' && v != 'drums')) return 1
+    return sheetPageCount(i, v == 'drums' ? 'drums' : 'chords')
+  })
+)
+
+// Another view of the same song starts on its first page: the words have only the one,
+// and the drum sheet need not have as many pages as the chord sheet. Moving to another
+// song sets the page itself, so stepping back still lands on the last page of the one before.
+watch([shown, currentFileIndex], ([v, i], [was, wasAt]) => {
+  if (i == wasAt && v != was) currentFilePage.value = 1
+})
+
 const online = useOnline()
 
 const annotations = useAnnotations({
@@ -91,7 +116,7 @@ const pdfHeight = computed(() => Math.min(width.value * Math.sqrt(2), height.val
 
 function next() {
   if (annot.value) return
-  if (currentFilePage.value < fileContents.value[currentFileIndex.value].pageCount!) currentFilePage.value++
+  if (currentFilePage.value < pageCounts.value[currentFileIndex.value]) currentFilePage.value++
   else if (currentFileIndex.value < fileContents.value.length - 1) {
     currentFileIndex.value++
     currentFilePage.value = 1
@@ -102,7 +127,7 @@ function prev() {
   if (currentFilePage.value > 1) currentFilePage.value--
   else if (currentFileIndex.value > 0) {
     currentFileIndex.value--
-    currentFilePage.value = fileContents.value[currentFileIndex.value].pageCount!
+    currentFilePage.value = pageCounts.value[currentFileIndex.value]
   }
 }
 
@@ -203,6 +228,7 @@ const noSheetHint = computed(() =>
       <v-btn v-if="editableSong" icon="fas fa-pen" size="small" variant="text" @click=";((editFocus = undefined), (editDialogOpen = true))" />
       <FileNavStrip
         :files="fileContents"
+        :pageCounts="pageCounts"
         :fileIndex="currentFileIndex"
         :page="currentFilePage"
         :lockedTo="annot ? currentFileIndex : null"
